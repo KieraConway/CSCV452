@@ -11,7 +11,7 @@
 #include "kernel.h"
 
 /* ------------------------- Prototypes ----------------------------------- */
-int sentinel (void *);
+int sentinel (char *);        //KC TODO void to char
 extern int start1 (char *);
 void dispatcher(void);
 void launch();
@@ -49,6 +49,7 @@ void startup()
 {
    int i;      /* loop index */
    int result; /* value returned by call to fork1() */
+   char ReadyList;   //KC TODO, Temp line fix for line 59
 
    /* initialize the process table */
 
@@ -105,6 +106,15 @@ void finish()
              parent process to reflect this child process creation.
    Parameters - the process procedure address, the size of the stack and
                 the priority to be assigned to the child process.
+
+            //KC: added complete descriptions below//
+            name:       descriptive name for process, no longer than 
+                        MAXNAME
+            f:          function child process is executing from
+            arg:        f argument
+            stacksize:  process stacksize in bytes
+            priority:   priority to be assigned to child process
+
    Returns - the process id of the created child or -1 if no child could
              be created or if priority is not between max and min priority.
    Side Effects - ReadyList is changed, ProcTable is changed, Current
@@ -114,10 +124,14 @@ int fork1(char *name, int (*f)(char *), char *arg, int stacksize, int priority)
 {
    int proc_slot;
 
-   if (DEBUG && debugflag)
+   /*KC: DEBUG = 0 in kernel.h */
+   /*KC: debugflag = 1 local */
+
+   if (DEBUG && debugflag)                               
       console("fork1(): creating process %s\n", name);
 
    /* test if in kernel mode; halt if in user mode */
+
 
    /* Return if stack size is too small */
 
@@ -167,7 +181,7 @@ void launch()
       console("launch(): started\n");
 
    /* Enable interrupts */
-   enableInterrupts();
+   //enableInterrupts();   //KC: TODO  
 
    /* Call the function passed to fork1, and capture its return value */
    result = Current->start_func(Current->start_arg);
