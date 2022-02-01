@@ -4,6 +4,7 @@
 
    CSCV 452
 
+   NOTE for zapped processes -> use linked list
    ------------------------------------------------------------------------ */
 #include <stdlib.h>
 #include <string.h>
@@ -25,6 +26,8 @@ int GetNextPid();
 void clockHandler(int dev, void *arg);
 proc_ptr GetNextReadyProc();
 void DebugConsole(char *format, ...);
+int check_io();
+void ListInsert(proc_ptr *child,proc_struct *table);
 
 /* -------------------------- Globals ------------------------------------- */
 
@@ -35,6 +38,8 @@ int debugflag = 1;
 proc_struct ProcTable[MAXPROC];
 
 /* Process lists  */
+proc_ptr readyProcs[5]; // Linked list of priorities
+// if empty, run sentinel
 
 /* current process ID */
 proc_ptr Current;
@@ -48,19 +53,6 @@ int init = 1;
 
 
 /* -------------------------- Functions ----------------------------------- */
-
-// Displaying debugging prompts
-void DebugConsole(char *format, ...)
-{
-   if (DEBUG && debugflag)
-   {
-      va_list argptr;
-      va_start(argptr, format);
-      console(format, argptr);
-      va_end(argptr);
-   }
-}
-
 
 /* ------------------------------------------------------------------------
    Name - startup
@@ -91,7 +83,8 @@ void startup()
 
    result = fork1("sentinel", sentinel, NULL, USLOSS_MIN_STACK, SENTINELPRIORITY); // call fork1
 
-   if (result < 0) {
+   if (result < 0)
+   {
       DebugConsole("startup(): fork1 of sentinel returned error, halting...\n");
       halt(1);
    }
@@ -159,7 +152,7 @@ int fork1(char *name, int (*func)(char *), char *arg, int stacksize, int priorit
    }
    
    // Out-of-range priorities
-   if ((priority > MINPRIORITY) || (priority < MAXPRIORITY))
+   if ((priority > LOWEST_PRIORITY) || (priority < HIGHEST_PRIORITY))
    {
       console("Process priority is out of range. Must be 1 - 5...\n");
       return -1;
@@ -198,7 +191,7 @@ int fork1(char *name, int (*func)(char *), char *arg, int stacksize, int priorit
    // Check if out of memory
    if (ProcTable[proc_slot].stack == NULL)
    {
-      DebugConsole("Out of memory....Halting...");
+      DebugConsole("Out of memory.\n");
       halt(1);
    }
 
@@ -209,7 +202,7 @@ int fork1(char *name, int (*func)(char *), char *arg, int stacksize, int priorit
    }
 
    strcpy(ProcTable[proc_slot].name, name);
-   ProcTable[proc_slot].start_func = f;
+   ProcTable[proc_slot].start_func = func;
 
    if ( arg == NULL )
       ProcTable[proc_slot].start_arg[0] = '\0';
@@ -220,6 +213,9 @@ int fork1(char *name, int (*func)(char *), char *arg, int stacksize, int priorit
    }
    else
       strcpy(ProcTable[proc_slot].start_arg, arg);
+
+   /* set the parent and child values */
+   ListInsert(&Current->child_proc_ptr, &ProcTable[proc_slot]); // Linked list insert child Params: (head ptr, first node in list)
 
    /* Initialize context for this process, but use launch function pointer for
     * the initial value of the process's program counter (PC)
@@ -288,7 +284,7 @@ int join(int *code)
 
    // if no children return -2
 
-   // children identified
+   // children identified -> block parent process until one child exits
    Current->status = STATUS_BLOCKED;
 
    dispatcher();
@@ -332,8 +328,6 @@ void dispatcher(void)
    next_Process = GetNextReadyProc(); // added in kg
    oldProcess = Current; // added in kg
 
-   procSlot = 2; // added in kg
-
    // Make sure Current is pointing to thge process we're switching to.
    // Needs to be done before context switch
    Current = next_Process; // added in kg
@@ -365,9 +359,52 @@ int sentinel (char * dummy)
 } /* sentinel */
 
 
+int zap(int pid)
+{
+   // call is_zapped()
+   // won't return until zapped prcoess has called quit
+   // print error msg and halt(1) if process tries to zap itself
+   // or attempts to zap a non-existent prcoess
+
+   // return values:
+   // -1 - calling process itself was zapped while in zap
+   // 0 - zapped process has called quit
+}
+
+
+int getpid(void)
+{
+   // based on processes, check for running status and return the pid
+}
+
+
+int is_zapped(void)
+{
+   // return 0 if not zapped
+   // return 1 if zapped
+}
+
+
+void dump_processes(void)
+{
+   // prints process ifnro to console
+   // for each PCB, output:
+   // PID, parent' PID, priority, process status, # children, CPU time consumed, and name
+}
+
+
 /* check to determine if deadlock has occurred... */
 static void check_deadlock()
 {
+   if (check_io() == 1)
+      return;
+
+   /* Has everyone terminated? */
+   // check the number of process
+   // if there is only one active prcoess
+   // halt(0);
+   //otherwise
+   //halt(1);
 } /* check_deadlock */
 
 
@@ -387,31 +424,30 @@ void disableInterrupts()
 } /* disableInterrupts */
 
 
-
 // Added functions kg
-// For checking for kernel mode within fork1()
+/* ------------------------------------------------------------------------
+   Name - check_kernel_mode
+   Purpose - Checks the PSR for kernel mode and halts if in user mode
+   Parameters - none
+   Returns - nothing
+   Side Effects - Will halt if not kernel mode
+   ----------------------------------------------------------------------- */
 static void check_kernel_mode(const char *functionName)
 {
-   union psr_values caller_psr; /* holds caller's psr values */
-   char buffer[200];
+   union psr_values psrValue; /* holds caller's psr values */
 
-   if (DEBUG && debugflag)
-   {
-      sprintf(buffer, "check_kernel_node(): called for function %s\n", functionName);
-      console("%s", buffer);
-   }
+   DebugConsole("check_kernel_node(): verifying kernel mode for %s\n", functionName);
 
    /* test if in kernel mode; halt if in user mode */
-   caller_psr.integer_part = psr_get();
+   psrValue.integer_part = psr_get();
 
-   if (caller_psr.bits.cur_mode == 0)
+   if (psrValue.bits.cur_mode == 0)
    {
-      sprintf(buffer, "%s(): called while in user mode, by prcoess %d. Halting...\n", functionName, Current->pid);
-      console("%s", buffer);
+      console("Kernel mode expected, but function called in user mode.\n");
       halt(1);
    }
 
-   printf("OS is in Kernel mode\n");
+   console("Function is in Kernel mode (:\n");
 }
 
 
@@ -437,7 +473,9 @@ int GetNextPid()
 
 static void enableInterrupts()
 {
+   check_kernel_mode(__func__);
 
+   int psr = psr_get();
 }
 
 
@@ -445,6 +483,10 @@ proc_ptr GetNextReadyProc()
 {
    int highestPrior = 6;
    proc_ptr pNextProc = NULL;
+
+   // check priority array
+   // here
+
 
    for (int i = 0; i < MAXPROC; i++)
    {
@@ -460,5 +502,41 @@ proc_ptr GetNextReadyProc()
 }
 
 
+// This is apparently all we need -> will be important for phase 2
+int check_io()
+{
+   return 0;
+}
 
+
+// Linked list - either singly or doubly
+void ListInsert(proc_ptr *child,proc_struct *table)
+{
+
+}
+
+
+void clockHandler(int dev, void *arg)
+{
+   int i = 0;
+   // time-slice = 80 milliseconds
+   // detect 80 ms -> switch to next highest priority processor
+   //if (Current->runtime > 80ms) dispatcher();
+
+}
+
+
+// Displaying debugging prompts
+void DebugConsole(char *format, ...)
+{
+   if (DEBUG && debugflag)
+   {
+      /*va_list argptr;
+      va_start(argptr, format);
+      console(format, argptr);
+      va_end(argptr);*/
+
+      printf("%s\n", format);
+   }
+}
 
