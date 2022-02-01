@@ -13,43 +13,46 @@ typedef struct proc_struct * proc_ptr;
 #define STATUS_ZAPPED   5
 #define STATUS_ZAPPER   6
 #define STATUS_LAST     7
+#define SIBLING_LIST_OFFSET (sizeof(proc_ptr))
+#define ZAPPERS_LIST_OFFSET (sizeof(proc_ptr))
 
 struct proc_struct {
-   proc_ptr       next_proc_ptr;
-   proc_ptr       child_proc_ptr;
-   proc_ptr       next_sibling_ptr;
-   char           name[MAXNAME];     /* process's name */
-   char           start_arg[MAXARG]; /* args passed to process */
-   context        state;             /* current context for process */
-   short          pid;               /* process id */
-   int            priority;
-   int (* start_func) (char *);   /* function where process begins -- launch */
-   char          *stack;
-   unsigned int   stacksize;
-   int            status;         /* READY, BLOCKED, QUIT, etc. */
+	proc_ptr        next_ready_proc;        //list of ready processes [prev next_proc_ptr]
+	proc_ptr        prev_ready_proc;		// used doubly linked list
+	proc_ptr        parent_proc_ptr;		// for refering back to parent process inside of ListInsert() within phase1.c
+    proc_ptr        child_proc_ptr;         //pHead
+    proc_ptr        next_sibling_ptr;       //pNext Sibling
+    proc_ptr        prev_sibling_ptr;       //pPrev Sibling
+    proc_ptr        next_zapping_ptr;       //pNext Zapping
+    proc_ptr        prev_zapping_ptr;       //pPrev Zapping
+    //TODO
+    //proc_list     children;
+    //proc_list     zappers;
+    char            name[MAXNAME];        /* process's name */
+    char            start_arg[MAXARG];    /* args passed to process */
+    context         state;                /* current context for process */
+    short           pid;                  /* process id */
+    int             priority;
+    int (* start_func) (char *);   /* function where process begins -- launch */
+    char            *stack;
+    unsigned int    stackSize;
+    int             status;         /* READY, BLOCKED, QUIT, etc. */
    /* other fields as needed... */
-   proc_ptr       parent_proc_ptr;  // for refering back to parent process inside of ListInsert() within phase1.c
-   proc_ptr       prev_proc_ptr;    // used doubly linked list
-   proc_ptr       prev_sibling_ptr;
-   proc_ptr       next_zapping_ptr;
-   proc_ptr       next_prev_ptr;
-   //proc_list      children;
-   //proic_list     zappers;
-   int            startTime;
-   int            switchTime; // last time switched
+    int             startTime;				//process start time
+    int             switchTime;				// last time switched
 };
 
 struct psr_bits {
-        unsigned int cur_mode:1;
-       unsigned int cur_int_enable:1;
-        unsigned int prev_mode:1;
-        unsigned int prev_int_enable:1;
-    unsigned int unused:28;
+	unsigned int cur_mode:1;
+	unsigned int cur_int_enable:1;
+	unsigned int prev_mode:1;
+	unsigned int prev_int_enable:1;
+	unsigned int unused:28;
 };
 
 union psr_values {
-   struct psr_bits bits;
-   unsigned int integer_part;
+	struct psr_bits bits;
+	unsigned int integer_part;
 };
 
 /* Some useful constants.  Add more as needed... */
@@ -58,4 +61,3 @@ union psr_values {
 #define MAXPRIORITY 1
 #define SENTINELPID 1
 #define SENTINELPRIORITY LOWEST_PRIORITY
-
