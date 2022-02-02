@@ -4,6 +4,8 @@ typedef struct proc_struct proc_struct;
 
 typedef struct proc_struct * proc_ptr;
 
+typedef struct status_struct * pStatusNode;
+
 // ADDED FROM WEEK 3 VIDEO
 #define STATUS_EMPTY    0
 #define STATUS_RUNNING  1
@@ -16,10 +18,15 @@ typedef struct proc_struct * proc_ptr;
 #define SIBLING_LIST_OFFSET (sizeof(proc_ptr))
 #define ZAPPERS_LIST_OFFSET (sizeof(proc_ptr))
 
+/* Structure of Process' Status */
+struct status_struct{
+    proc_ptr    pHeadProc;
+    proc_ptr    pNextProc;      //list of process status
+    proc_ptr    pPrevProc;		//used doubly linked list
+};
+
 struct proc_struct {
-	proc_ptr        next_ready_proc;        //list of ready processes [prev next_proc_ptr]
-	proc_ptr        prev_ready_proc;		// used doubly linked list
-	proc_ptr        parent_proc_ptr;		// for refering back to parent process inside of ListInsert() within phase1.c
+    proc_ptr        parent_proc_ptr;		//for referring back to parent process inside of ListInsert() within phase1.c
     proc_ptr        child_proc_ptr;         //pHead
     proc_ptr        next_sibling_ptr;       //pNext Sibling
     proc_ptr        prev_sibling_ptr;       //pPrev Sibling
@@ -37,22 +44,22 @@ struct proc_struct {
     char            *stack;
     unsigned int    stackSize;
     int             status;         /* READY, BLOCKED, QUIT, etc. */
-   /* other fields as needed... */
+    /* other fields as needed... */
     int             startTime;				//process start time
     int             switchTime;				// last time switched
 };
 
 struct psr_bits {
-	unsigned int cur_mode:1;
-	unsigned int cur_int_enable:1;
-	unsigned int prev_mode:1;
-	unsigned int prev_int_enable:1;
-	unsigned int unused:28;
+    unsigned int cur_mode:1;
+    unsigned int cur_int_enable:1;
+    unsigned int prev_mode:1;
+    unsigned int prev_int_enable:1;
+    unsigned int unused:28;
 };
 
 union psr_values {
-	struct psr_bits bits;
-	unsigned int integer_part;
+    struct psr_bits bits;
+    unsigned int integer_part;
 };
 
 /* Some useful constants.  Add more as needed... */
