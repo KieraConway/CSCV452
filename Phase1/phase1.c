@@ -2,20 +2,19 @@
    phase1.c
 
    CSCV 452
-<<<<<<< Updated upstream
 
-=======
-   
 	Katelyn Griffith
 	Kiera Conway
->>>>>>> Stashed changes
    ------------------------------------------------------------------------ */
-   /* * * * * * * * * * * * * * * * * * * * *	
-   * Author Notes
-   *
-   *   for zapped processes -> use linked list
-   * * * * * * * * * * * * * * * * * * * * */
-   
+/* * * * * * * * * * * * * * * * * * * * *
+* Author Notes
+*   NEXT: 
+*        (1) fix strcmp in fork1
+*        (2) match function prototypes 
+*            from phase1.c and phase1.h
+*   for zapped processes -> use linked list
+* * * * * * * * * * * * * * * * * * * * */
+
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -23,28 +22,21 @@
 #include "kernel.h"
 
 /* ------------------------- Prototypes ----------------------------------- */
-<<<<<<< Updated upstream
-int sentinel (char *);        //KC TODO void to char
-=======
 int sentinel (char *);			//TODO: void-> char
->>>>>>> Stashed changes
 extern int start1 (char *);
 void dispatcher(void);
 void launch();
 static void enableInterrupts();
 static void check_deadlock();
 
-<<<<<<< Updated upstream
-=======
 // added functions for processing kg
 static void check_kernel_mode(const char *functionName); //Check Kernel Mode
 void ClockIntHandler(int dev, void *arg);                //Clock handler
 void DebugConsole(char *format, ...);                    //Debug console
-void ListInsert(proc_ptr *child,proc_struct *table);
+int ListInsert(proc_ptr *child,proc_struct *table);
 int GetNextPid();
 int check_io();
 proc_ptr GetNextReadyProc();
->>>>>>> Stashed changes
 
 /* -------------------------- Globals ------------------------------------- */
 
@@ -54,30 +46,26 @@ int debugflag = 1;
 /* the process table */
 proc_struct ProcTable[MAXPROC];
 
-/* Process lists  */
-
-/*TODO decide process list type
-proc_ptr readyPriority1;
-proc_ptr readyPriority2;
-proc_ptr readyPriority3;
-proc_ptr readyPriority4;
-proc_ptr readyPriority5;
-*/
-
 /* current process ID */
 proc_ptr Current;
 
 /* the next pid to be assigned */
 unsigned int next_pid = SENTINELPID;
 
-<<<<<<< Updated upstream
-=======
-/* number of active processes */ 
+/* number of active processes */
 unsigned int numProc = 0; 	// kg
 
 /* Error Check: context_switch() Initializer */
 int init = 1;
->>>>>>> Stashed changes
+
+/* Total Process Counts */
+int totalProc;
+int totalReadyProc;
+int totalBlockedProc;
+
+/* Process lists  */
+struct status_struct ReadyList[5];      //Ready Processes
+struct status_struct BlockedList[5];    //Blocked Processes
 
 /* -------------------------- Functions ----------------------------------- */
 /* ------------------------------------------------------------------------
@@ -88,46 +76,53 @@ int init = 1;
    Returns - nothing
    Side Effects - lots, starts the whole thing
    ----------------------------------------------------------------------- */
-   void startup()
+void startup()
 {
-   int i;      /* loop index */
-   int result; /* value returned by call to fork1() */
-   char ReadyList;   //KC TODO, Temp line fix for line 59
+    int i;      /* loop index */
+    int result; /* value returned by call to fork1() */
 
-   /* initialize the process table */
+    /* initialize the process table */
+    memset(ProcTable, 0, sizeof(ProcTable)); // added in kg
 
-   /* Initialize the Ready list, etc. */
-   if (DEBUG && debugflag)
-      console("startup(): initializing the Ready & Blocked lists\n");
-   ReadyList = NULL;
+    /* Initialize the Ready list, etc. */
+    DebugConsole("startup(): initializing the Ready & Blocked lists\n");
+    int totalProc = 0;
+    int totalReadyProc = 0;
+    int totalBlockedProc = 0;
+    //ReadyList = NULL; List of ready processes
 
-   /* Initialize the clock interrupt handler */
+    /* Initialize the clock interrupt handler */
+    int_vec[CLOCK_INT] = &ClockIntHandler; // added in kg
 
-   /* startup a sentinel process */
-   if (DEBUG && debugflag)
-       console("startup(): calling fork1() for sentinel\n");
-   result = fork1("sentinel", sentinel, NULL, USLOSS_MIN_STACK,
-                   SENTINELPRIORITY);
-   if (result < 0) {
-      if (DEBUG && debugflag)
-         console("startup(): fork1 of sentinel returned error, halting...\n");
-      halt(1);
-   }
-  
-   /* start the test process */
-   if (DEBUG && debugflag)
-      console("startup(): calling fork1() for start1\n");
-   result = fork1("start1", start1, NULL, 2 * USLOSS_MIN_STACK, 1);
-   if (result < 0) {
-      console("startup(): fork1 for start1 returned an error, halting...\n");
-      halt(1);
-   }
+    /* startup a sentinel process */
+    DebugConsole("startup(): calling fork1() for sentinel\n");
 
-   console("startup(): Should not see this message! ");
-   console("Returned from fork1 call that created start1\n");
+    result = fork1("sentinel", sentinel, NULL, USLOSS_MIN_STACK, SENTINELPRIORITY); // call fork1
 
-   return;
+    if (result < 0)
+    {
+        DebugConsole("startup(): fork1 of sentinel returned error, halting...\n");
+        halt(1);
+    }
+
+    init = 0; // added in kg
+
+    /* start the test process */
+    DebugConsole("startup(): calling fork1() for start1\n");
+
+    result = fork1("start1", start1, NULL, 2 * USLOSS_MIN_STACK, 1);
+
+    if (result < 0) {
+        console("startup(): fork1 for start1 returned an error, halting...\n");
+        halt(1);
+    }
+
+    DebugConsole("startup(): Should not see this message! ");
+    DebugConsole("Returned from fork1 call that created start1\n");
+
+    return;
 } /* startup */
+
 
 /* ------------------------------------------------------------------------
    Name - finish
@@ -138,8 +133,7 @@ int init = 1;
    ----------------------------------------------------------------------- */
 void finish()
 {
-   if (DEBUG && debugflag)
-      console("in finish...\n");
+    DebugConsole("in finish...\n");
 } /* finish */
 
 /* ------------------------------------------------------------------------
@@ -149,81 +143,87 @@ void finish()
              parent process to reflect this child process creation.
    Parameters - the process procedure address, the size of the stack and
                 the priority to be assigned to the child process.
-
-            //KC: added complete descriptions below//
-            name:       descriptive name for process, no longer than 
-                        MAXNAME
-            f:          function child process is executing from
-            arg:        f argument
-            stacksize:  process stacksize in bytes
-            priority:   priority to be assigned to child process
-
    Returns - the process id of the created child or -1 if no child could
              be created or if priority is not between max and min priority.
    Side Effects - ReadyList is changed, ProcTable is changed, Current
                   process information changed
    ------------------------------------------------------------------------ */
-int fork1(char *name, int (*f)(char *), char *arg, int stacksize, int priority)
+int fork1(char *name, int (*func)(char *), char *arg, int stackSize, int priority)
 {
-   int proc_slot;
+    int proc_slot;
+    int newPid; // added in kg
 
-   /*KC: DEBUG = 0 in kernel.h */
-   /*KC: debugflag = 1 local */
+    DebugConsole("fork1(): creating process %s\n", name);
 
-   if (DEBUG && debugflag)                               
-      console("fork1(): creating process %s\n", name);
+    /* test if in kernel mode; halt if in user mode */
+    check_kernel_mode(__func__);
 
-   /* test if in kernel mode; halt if in user mode */
+    /* Return if stack size is too small-> no empty slots in process table*/
+    // Added flag checks in kg
+    if (totalProc > MAXPROC)
+    {
+        console("There are no empty slots in the process table...\n");
+        return -1;
+    }
 
+    // Out-of-range priorities
+    if ((priority > LOWEST_PRIORITY) || (priority < HIGHEST_PRIORITY))
+    {
+        console("Process priority is out of range. Must be 1 - 5...\n");
+        return -1;
+    }
 
-   /* Return if stack size is too small */
+    // func is NULL
+    if (func == NULL)
+    {
+        console("func was null...\n");
+        return -1;
+    }
 
-<<<<<<< Updated upstream
-   /* find an empty slot in the process table */
+    //TODO FIX strcmp
+    // name is NULL
+    if (strcmp(*name, NULL) == 0)
+    {
+        console("name was null...\n");
+        return -1;
+    }
 
-   /* fill-in entry in process table */
-   if ( strlen(name) >= (MAXNAME - 1) ) {
-      console("fork1(): Process name is too long.  Halting...\n");
-      halt(1);
-   }
-   strcpy(ProcTable[proc_slot].name, name);
-   ProcTable[proc_slot].start_func = f;
-   if ( arg == NULL )
-      ProcTable[proc_slot].start_arg[0] = '\0';
-   else if ( strlen(arg) >= (MAXARG - 1) ) {
-      console("fork1(): argument too long.  Halting...\n");
-      halt(1);
-   }
-   else
-      strcpy(ProcTable[proc_slot].start_arg, arg);
-=======
-	/* find an empty slot in the process table */
-	newPid = GetNextPid();  						//get next process ID
-	proc_slot = newPid % MAXPROC;   				//assign slot
-	ProcTable[proc_slot].pid = newPid;  			//assign pid
-	ProcTable[proc_slot].priority = priority; 		//assign priority
-	ProcTable[proc_slot].status = STATUS_READY; 	//assign READY status
-	ProcTable[proc_slot].stackSize = stackSize; 	//assign stackSize
-	ProcTable[proc_slot].stack = malloc(stackSize) ;//assign stack
+    // Stacksize is less than USLOSS_MIN_STACK
+    if (stackSize < USLOSS_MIN_STACK)
+    {
+        console("stackSize was less than minimum stack address...\n");
+        return -2;
+    }
 
-	// Check if out of memory - malloc return value
-	if (ProcTable[proc_slot].stack == NULL)
-	{
-		DebugConsole("Out of memory.\n");
-		halt(1);
-	}
+    /* find an empty slot in the process table */
+    newPid = GetNextPid();  						//get next process ID
+    proc_slot = newPid % MAXPROC;   				//assign slot
+    ProcTable[proc_slot].pid = newPid;  			//assign pid
+    ProcTable[proc_slot].priority = priority; 		//assign priority
+    ProcTable[proc_slot].status = STATUS_READY; 	//assign READY status
+    ProcTable[proc_slot].stackSize = stackSize; 	//assign stackSize
+    ProcTable[proc_slot].stack = malloc(stackSize) ;//assign stack
 
-	/* fill-in entry in process table */
-	if ( strlen(name) >= (MAXNAME - 1) ) {
-		DebugConsole("fork1(): Process name is too long.  Halting...\n");
-		halt(1);
-	}
+    // Check if out of memory - malloc return value
+    if (ProcTable[proc_slot].stack == NULL)
+    {
+        DebugConsole("Out of memory.\n");
+        halt(1);
+    }
 
-	//Process Name
-	strcpy(ProcTable[proc_slot].name, name);
-   
-	//Process Function
-	ProcTable[proc_slot].start_func = func;
+    totalProc++;    //increment total process table count
+
+    /* fill-in entry in process table */
+    if ( strlen(name) >= (MAXNAME - 1) ) {
+        DebugConsole("fork1(): Process name is too long.  Halting...\n");
+        halt(1);
+    }
+
+    //Process Name
+    strcpy(ProcTable[proc_slot].name, name);
+
+    //Process Function
+    ProcTable[proc_slot].start_func = func;
 
 
     //Process Function Argument(s)
@@ -235,17 +235,29 @@ int fork1(char *name, int (*f)(char *), char *arg, int stacksize, int priority)
     }
     else
         strcpy(ProcTable[proc_slot].start_arg, arg);
->>>>>>> Stashed changes
 
-   /* Initialize context for this process, but use launch function pointer for
-    * the initial value of the process's program counter (PC)
-    */
-   context_init(&(ProcTable[proc_slot].state), psr_get(),
-                ProcTable[proc_slot].stack, 
-                ProcTable[proc_slot].stacksize, launch);
+    /* set the parent and child values */
+    ListInsert(&Current->child_proc_ptr, &ProcTable[proc_slot]); // Linked list insert child Params: (head ptr, first node in list)
+    totalReadyProc++; //increment ready process count
 
-   /* for future phase(s) */
-   p1_fork(ProcTable[proc_slot].pid);
+    /* Initialize context for this process, but use launch function pointer for
+     * the initial value of the process's program counter (PC)
+     */
+    context_init(&(ProcTable[proc_slot].state), psr_get(),
+                 ProcTable[proc_slot].stack,
+                 ProcTable[proc_slot].stackSize, launch);
+
+    /* for future phase(s) */
+    p1_fork(ProcTable[proc_slot].pid);
+
+    // added in kg
+    if (!init)
+    {
+        // Call dispatcher
+        dispatcher();
+    }
+
+    // end of added in
 
 } /* fork1 */
 
@@ -259,49 +271,45 @@ int fork1(char *name, int (*f)(char *), char *arg, int stacksize, int priority)
    ------------------------------------------------------------------------ */
 void launch()
 {
-	int result;
+    int result;
 
-<<<<<<< Updated upstream
-   if (DEBUG && debugflag)
-      console("launch(): started\n");
+    DebugConsole("launch(): started\n");
 
-   /* Enable interrupts */
-   //enableInterrupts();   //KC: TODO  
-=======
-	DebugConsole("launch(): started\n");
+    /* Enable interrupts */
+    enableInterrupts();
 
-	/* Enable interrupts */
-	enableInterrupts();
->>>>>>> Stashed changes
+    /* Call the function passed to fork1, and capture its return value */
+    result = Current->start_func(Current->start_arg);
 
-	/* Call the function passed to fork1, and capture its return value */
-	result = Current->start_func(Current->start_arg);
+    DebugConsole("Process %d returned to launch\n", Current->pid);
 
-<<<<<<< Updated upstream
-   if (DEBUG && debugflag)
-      console("Process %d returned to launch\n", Current->pid);
-=======
-	DebugConsole("Process %d returned to launch\n", Current->pid);
->>>>>>> Stashed changes
-
-	quit(result);
+    quit(result);
 
 } /* launch */
 
 /* ------------------------------------------------------------------------
    Name - join
-   Purpose - Wait for a child process (if one has been forked) to quit.  If 
+   Purpose - Wait for a child process (if one has been forked) to quit.  If
              one has already quit, don't wait.
-   Parameters - a pointer to an int where the termination code of the 
+   Parameters - a pointer to an int where the termination code of the
                 quitting process is to be stored.
    Returns - the process id of the quitting child joined on.
 		-1 if the process was zapped in the join
 		-2 if the process has no children
-   Side Effects - If no child process has quit before join is called, the 
+   Side Effects - If no child process has quit before join is called, the
                   parent is removed from the ready list and blocked.
    ------------------------------------------------------------------------ */
 int join(int *code)
 {
+    check_kernel_mode(__func__);
+
+    // if no children return -2
+
+    // children identified -> block parent process until one child exits
+    Current->status = STATUS_BLOCKED;
+
+    dispatcher();
+
 } /* join */
 
 
@@ -316,38 +324,38 @@ int join(int *code)
    ------------------------------------------------------------------------ */
 void quit(int code)
 {
-	p1_quit(Current->pid);
+    p1_quit(Current->pid);
 } /* quit */
 
 /* ------------------------------------------------------------------------
    Name - GetNextReadyProc
-   Purpose - 
+   Purpose -
    Parameters - none
    Returns - nothing
    Side Effects - the context of the machine is changed
    ----------------------------------------------------------------------- */
 proc_ptr GetNextReadyProc()
 {
-	int highestPrior = 6;
-	proc_ptr pNextProc = NULL;
+    int highestPrior = 6;
+    proc_ptr pNextProc = NULL;
 
     /*
      * TODO
      * check priority lists/array
      */
 
-	for (int i = 0; i < MAXPROC; i++)
-	{
-		// Get highest priority process running in process table
-		if ((ProcTable[i].status == STATUS_READY) && (ProcTable[i].priority < highestPrior))
-		{
-			//TODO: if (ProcTable[i].priority is < pNextProc) , remove break
-			pNextProc = &ProcTable[i];
-			break;
-	}
-	}
+    for (int i = 0; i < MAXPROC; i++)
+    {
+        // Get highest priority process running in process table
+        if ((ProcTable[i].status == STATUS_READY) && (ProcTable[i].priority < highestPrior))
+        {
+            //TODO: if (ProcTable[i].priority is < pNextProc) , remove break
+            pNextProc = &ProcTable[i];
+            break;
+        }
+    }
 
-	return pNextProc; // return pointer to next ready proc
+    return pNextProc; // return pointer to next ready proc
 }
 
 
@@ -363,25 +371,19 @@ proc_ptr GetNextReadyProc()
    ----------------------------------------------------------------------- */
 void dispatcher(void)
 {
-<<<<<<< Updated upstream
-   proc_ptr next_process;
+    proc_ptr oldProcess; // added in kg
+    proc_ptr next_Process;
 
-   p1_switch(Current->pid, next_process->pid);
-=======
-	proc_ptr oldProcess; // added in kg
-	proc_ptr next_Process;
+    //p1_switch(Current->pid, next_process->pid); TODO
 
-	//p1_switch(Current->pid, next_process->pid); TODO
+    next_Process = GetNextReadyProc(); //assign newProcess; added in kg
+    oldProcess = Current; 			// added in kg
 
-	next_Process = GetNextReadyProc(); //assign newProcess; added in kg
-	oldProcess = Current; 			// added in kg
+    /* Make sure Current is pointing to the process we are switching to
+    must be done Before context_switch() */
+    Current = next_Process; // added in kg
 
-	/* Make sure Current is pointing to the process we are switching to
-	must be done Before context_switch() */
-	Current = next_Process; // added in kg
-
-	context_switch((oldProcess == NULL) ? NULL : &oldProcess->state, &next_Process->state); // added in kg
->>>>>>> Stashed changes
+    context_switch((oldProcess == NULL) ? NULL : &oldProcess->state, &next_Process->state); // added in kg
 } /* dispatcher */
 
 
@@ -398,73 +400,68 @@ void dispatcher(void)
    ----------------------------------------------------------------------- */
 int sentinel (char * dummy)
 {
-   if (DEBUG && debugflag)
-      console("sentinel(): called\n");
-   while (1)
-   {
-      check_deadlock();
-      waitint();
-   }
+    DebugConsole("sentinel(): called\n");
+
+    while (1)
+    {
+        check_deadlock();
+        waitint();
+    }
 } /* sentinel */
 
-<<<<<<< Updated upstream
-=======
 int zap(int pid)
 {
-	// TODO 
-	//call is_zapped()
-	// won't return until zapped prcoess has called quit
-	// print error msg and halt(1) if process tries to zap itself
-	// or attempts to zap a non-existent prcoess
+    // TODO
+    //call is_zapped()
+    // won't return until zapped prcoess has called quit
+    // print error msg and halt(1) if process tries to zap itself
+    // or attempts to zap a non-existent prcoess
 
-	// return values:
-	// -1 - calling process itself was zapped while in zap
-	// 0 - zapped process has called quit
+    // return values:
+    // -1 - calling process itself was zapped while in zap
+    // 0 - zapped process has called quit
 }
 
 
 int getpid(void)
 {
-	// TODO 
-	// based on processes, check for running status and return the pid
+    // TODO
+    // based on processes, check for running status and return the pid
 }
 
 
 int is_zapped(void)
 {
-	// TODO 
-	// return 0 if not zapped
-	// return 1 if zapped
+    // TODO
+    // return 0 if not zapped
+    // return 1 if zapped
+    //check non existent
 }
 
 
 void dump_processes(void)
 {
-	// TODO 
-	// prints process ifnro to console
-	// for each PCB, output:
-	// PID, parent' PID, priority, process status, # children, CPU time consumed, and name
+    // TODO
+    // prints process ifnro to console
+    // for each PCB, output:
+    // PID, parent' PID, priority, process status, # children, CPU time consumed, and name
 }
 
->>>>>>> Stashed changes
 
 /* check to determine if deadlock has occurred... */
 static void check_deadlock()
 {
-<<<<<<< Updated upstream
-=======
-   if (check_io() == 1)
-      return;
+    if (check_io() == 1)
+        return;
 
-   // TODO 
-   /* Has everyone terminated? */
-   // check the number of process
-   // if there is only one active prcoess
-   // halt(0);
-   //otherwise
-   //halt(1);
-   
->>>>>>> Stashed changes
+    // TODO
+    /* Has everyone terminated? */
+    // check the number of process
+    // if there is only one active prcoess
+    // halt(0);
+    //otherwise
+    //halt(1);
+
 } /* check_deadlock */
 
 /*
@@ -472,13 +469,13 @@ static void check_deadlock()
  */
 static void enableInterrupts()
 {
-	check_kernel_mode(__func__);
-	/*Confirmed Kernel Mode*/
-	int psr = psr_get();
+    check_kernel_mode(__func__);
+    /*Confirmed Kernel Mode*/
+    int curPsr = psr_get();
 
-	curPsr = curPsr | PSR_CURRENT_INT;
+    curPsr = curPsr | PSR_CURRENT_INT;
 
-	psr_set(curPsr); 
+    psr_set(curPsr);
 
 } /* enableInterrupts */
 
@@ -487,17 +484,15 @@ static void enableInterrupts()
  */
 void disableInterrupts()
 {
-  /* turn the interrupts OFF if we are in kernel mode */
-  if((PSR_CURRENT_MODE & psr_get()) == 0) {
-    //not in kernel mode
-    console("Kernel Error: Not in kernel mode, may not disable interrupts\n");
-    halt(1);
-  } else
-    /* We ARE in kernel mode */
-    psr_set( psr_get() & ~PSR_CURRENT_INT );
+    /* turn the interrupts OFF if we are in kernel mode */
+    if((PSR_CURRENT_MODE & psr_get()) == 0) {
+        //not in kernel mode
+        console("Kernel Error: Not in kernel mode, may not disable interrupts\n");
+        halt(1);
+    } else
+        /* We ARE in kernel mode */
+        psr_set( psr_get() & ~PSR_CURRENT_INT );
 } /* disableInterrupts */
-<<<<<<< Updated upstream
-=======
 
 /* ------------------------------------------------------------------------
    Name - check_kernel_mode
@@ -508,20 +503,20 @@ void disableInterrupts()
    ----------------------------------------------------------------------- */
 static void check_kernel_mode(const char *functionName)
 {
-   union psr_values psrValue; /* holds caller's psr values */
+    union psr_values psrValue; /* holds caller's psr values */
 
-   DebugConsole("check_kernel_node(): verifying kernel mode for %s\n", functionName);
+    DebugConsole("check_kernel_node(): verifying kernel mode for %s\n", functionName);
 
-   /* test if in kernel mode; halt if in user mode */
-   psrValue.integer_part = psr_get();
+    /* test if in kernel mode; halt if in user mode */
+    psrValue.integer_part = psr_get();
 
-   if (psrValue.bits.cur_mode == 0)
-   {
-      console("Kernel mode expected, but function called in user mode.\n");
-      halt(1);
-   }
+    if (psrValue.bits.cur_mode == 0)
+    {
+        console("Kernel mode expected, but function called in user mode.\n");
+        halt(1);
+    }
 
-   DebugConsole("Function is in Kernel mode (:\n");
+    DebugConsole("Function is in Kernel mode (:\n");
 }
 
 /* ------------------------------------------------------------------------
@@ -533,72 +528,72 @@ Side Effects -
 ----------------------------------------------------------------------- */
 void DebugConsole(char *format, ...)
 {
-	if (DEBUG && debugflag)
-	{
-		/*va_list argptr;
-		va_start(argptr, format);
-		console(format, argptr);
-		va_end(argptr);*/
-		//TODO
-		console("%s\n", format);
-	}
+    if (DEBUG && debugflag)
+    {
+        va_list argptr;
+        va_start(argptr, format);
+        console(format, argptr);
+        va_end(argptr);
+
+        //console("%s\n", format);
+    }
 }
 
 /* ------------------------------------------------------------------------
 Name - ClockIntHandler
 Purpose -
-Parameters - 
+Parameters -
 Returns - nothing
 Side Effects -
 ----------------------------------------------------------------------- */
-void clockHandler(int dev, void *arg)
+void ClockIntHandler(int dev, void *arg)
 {
-	int i = 0;
-	// time-slice = 80 milliseconds
-	// detect 80 ms -> switch to next highest priority processor
-	//if (Current->runtime > 80ms) dispatcher();
+    int i = 0;
+    // time-slice = 80 milliseconds
+    // detect 80 ms -> switch to next highest priority processor
+    //if (Current->runtime > 80ms) dispatcher();
 
-	sys_clock(); //returns time in microseconds
+    sys_clock(); //returns time in microseconds
 
-	//TODO
-	// phase1notes pg 6
-	/*If current process exceeds 80ms
-		call dispatcher
-	else
-		return
-	*/
-	/*
-	* if (current->runTime > 80ms)
-	*  dispatcher();
-	*/
+    //TODO
+    // phase1notes pg 6
+    /*If current process exceeds 80ms
+        call dispatcher
+    else
+        return
+    */
+    /*
+    * if (current->runTime > 80ms)
+    *  dispatcher();
+    */
 
-	return;
+    return;
 }
 
 /* ------------------------------------------------------------------------
 Name - GetNextPid
 Purpose - Obtain next pid whose % MAXPROC is open in the ProcTable
-Parameters - 
+Parameters -
 Returns - NewPid or -1 if ProcTable is full
 Side Effects -
 ----------------------------------------------------------------------- */
 int GetNextPid()
 {
-	int newPid = -1;
-	int procSlot = next_pid % MAXPROC;
+    int newPid = -1;
+    int procSlot = next_pid % MAXPROC;
 
-	if (numProc < MAXPROC)
-	{
-		while ((numProc < MAXPROC) && (ProcTable[procSlot].status != STATUS_EMPTY))
-		{
-			next_pid++;
-			procSlot = next_pid % MAXPROC;
-		}
+    if (numProc < MAXPROC)
+    {
+        while ((numProc < MAXPROC) && (ProcTable[procSlot].status != STATUS_EMPTY))
+        {
+            next_pid++;
+            procSlot = next_pid % MAXPROC;
+        }
 
-		newPid = next_pid++;	//assign newPid *then* increment next_pid
-	}
+        newPid = next_pid++;	//assign newPid *then* increment next_pid
+    }
 
-	return newPid;
+    return newPid;
 }
 
 /* ------------------------------------------------------------------------
@@ -606,20 +601,20 @@ int GetNextPid()
 Name - ListInsert
 Purpose - Add newProcess to list of child process
 Parameters -
-Returns -
+Returns - -1 upon failure, 0 success
 Side Effects -
 ----------------------------------------------------------------------- */
 
 // Linked list - either singly or doubly
-void ListInsert(proc_ptr *child,proc_struct *table)
-{
+int ListInsert(proc_ptr *child,proc_struct *table){
+    return 0;
 
 }
 
 /* ------------------------------------------------------------------------
  * TODO:
 Name - check_io
-Purpose - 
+Purpose -
 Parameters -
 Returns -
 Side Effects -
@@ -627,8 +622,6 @@ Side Effects -
 // This is apparently all we need -> will be important for phase 2
 int check_io()
 {
-   return 0;
+    return 0;
 }
 
-
->>>>>>> Stashed changes
