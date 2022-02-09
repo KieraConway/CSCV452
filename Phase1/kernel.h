@@ -9,17 +9,20 @@ typedef struct proc_struct * proc_ptr;
 //typedef struct status_struct * pStatusNode;
 
 // ADDED FROM WEEK 3 VIDEO
-#define STATUS_EMPTY    0
-#define STATUS_RUNNING  1
-#define STATUS_READY    2
-#define STATUS_QUIT     3
-#define STATUS_BLOCKED  4
-#define STATUS_ZAPPED   5
-#define STATUS_ZAPPER   6
-#define STATUS_LAST     7
+#define STATUS_EMPTY        0
+#define STATUS_RUNNING      1
+#define STATUS_READY        2
+#define STATUS_QUIT         3
+#define STATUS_ZAP_BLOCK    4
+#define STATUS_JOIN_BLOCK   5
+#define STATUS_ZAPPED       6
+#define STATUS_ZAPPER       7
+#define STATUS_LAST         8
+#define TIME_SLICE          80000   //80ms
 #define SIBLING_LIST_OFFSET (sizeof(proc_ptr))
 #define ZAPPERS_LIST_OFFSET (sizeof(proc_ptr))
 
+/* Structures for Ready/Block Status Lists */
 typedef struct statusStruct {
     proc_ptr process;
     struct statusStruct *pNextProc;
@@ -30,18 +33,25 @@ typedef struct statusQueue {
     StatusStruct *pHeadProc;
     StatusStruct *pTailProc;
 } StatusQueue;
+/* end of status structure lists */
 
+/* Structure for Process Child/Zap Lists */
+typedef struct procList{
+    proc_ptr pHead;     //pHead of list
+    proc_ptr pTail;     //pTail of
+    int total;
+}procList;
 
+/* Primary Process Structure */
 struct proc_struct {
-    proc_ptr        parent_proc_ptr;		//for referring back to parent process inside of ListInsert() within phase1.c
-    proc_ptr        child_proc_ptr;         //pHead
+    proc_ptr        parent_proc_ptr;		//Pointer to Parent
+    proc_ptr        child_proc_ptr;         //Pointer to Child
     proc_ptr        next_sibling_ptr;       //pNext Sibling
     proc_ptr        prev_sibling_ptr;       //pPrev Sibling
     proc_ptr        next_zapping_ptr;       //pNext Zapping
     proc_ptr        prev_zapping_ptr;       //pPrev Zapping
-    //TODO
-    //proc_list     children;
-    //proc_list     zappers;
+    procList       children;               //list of all children
+    procList       zappers;                //list of all zap
     char            name[MAXNAME];        /* process's name */
     char            start_arg[MAXARG];    /* args passed to process */
     context         state;                /* current context for process */

@@ -263,6 +263,7 @@ int fork1(char *name, int (*func)(char *), char *arg, int stackSize, int priorit
     if(Current != NULL) {
         ProcTable[proc_slot].parent_proc_ptr = Current;
         Current->child_proc_ptr = &ProcTable[proc_slot];
+        //TODO: implement new child lists
     }
     else{
         ProcTable[proc_slot].parent_proc_ptr = NULL;
@@ -333,11 +334,21 @@ void launch()
 int join(int *code)
 {
     check_kernel_mode(__func__);
+    //this is where blocking happens
+
 
     // if no children return -2
 
     // children identified -> block parent process until one child exits
-    Current->status = STATUS_BLOCKED;
+    Current->status = STATUS_JOIN_BLOCK;
+
+    //WHICH CHILD QUIT? RET CODE
+    //get ret code
+    //*code = child-> resultCode
+
+    //remove child from procTable
+    //free(pChild->stack)
+    //memset(&ProcTable[child_slot], 0, sizeof(proc)struct));
 
     dispatcher();
 
@@ -355,34 +366,57 @@ int join(int *code)
    ------------------------------------------------------------------------ */
 void quit(int code)
 {
+    //notify parent that proc is quitting
+    //pass code to parent (join returns, join (code))
+    //add code to process table (i.e name, pid, etc)
+    //quit(-1) = the code is -1
+
+    //save return code
+    //Current->resultCode = code;
+
+    //tell the parent process to un-block
+    //Current-> status = status ready
+
+    //change status to quit
+    //current status = quit;
+    //do NOT kill here, parent will kill
+
     p1_quit(Current->pid);
 
-    //kill the process
-
-    //context switch
-
+    //dispatcher();
 } /* quit */
 
 /* ------------------------------------------------------------------------
    Name - GetNextReadyProc
    Purpose -
    Parameters - none
-   Returns - nothing
+   Returns - pNextProc: pointer to next ready process
    Side Effects - the context of the machine is changed
    ----------------------------------------------------------------------- */
 proc_ptr GetNextReadyProc()
 {
     int highestPrior = 6;
     proc_ptr pNextProc = NULL;
+    int priorityLimit = LOWEST_PRIORITY;
 
     /*
      * TODO
      * Check is sentinel is only process
      */
 
-    //iterate through 1, 2, 3, 4, 5,
+    if(Current && Current->status == STATUS_RUNNING){   //If there is current and its running
 
-    for (int i = 0; i < (MAXPROC); i++)
+        pNextProc = Current;                            //Set to current
+        if (Current->priority == 1){                    //if current priority is highest priority
+            return pNextProc;                           //return it as the next proc
+        }
+        else{                                           //if not current is not highest
+            priorityLimit = (Current->priority) - 2;    //Set limit to 1 before current index
+        }                                               // -1 because array, -1 to set limit before
+    }
+
+
+    for (int i = 0; i < priorityLimit; i++)
     {
         //Iterate through ReadyList by index to find next process
         if(ReadyList[i].pHeadProc){
@@ -407,69 +441,75 @@ proc_ptr GetNextReadyProc()
    ----------------------------------------------------------------------- */
 void dispatcher(void)
 {
-    proc_ptr oldProcess; // added in kg
-    proc_ptr next_Process;
+    proc_ptr prevProc;  //previously running process
+    proc_ptr nextProc;  //next process to run
+    int proc_slot;
+    int curPid = 0;
+    int currentTime = sys_clock();
 
-    //p1_switch(Current->pid, next_process->pid); TODO
+    //TODO: add disable interrupts here
+    // disableInterrupts();
 
-    check_kernel_mode(__func__);
+    //TODO: if Current exceed time slot, but is chosen as next, remove from ready list
 
-    /* Make sure Current is pointing to the process we are switching to
-    must be done Before context_switch() */
-    next_Process = GetNextReadyProc(); //assign newProcess; added in kg
-    oldProcess = Current;   // added in kg
-    Current = next_Process; // added in kg
+    nextProc = GetNextReadyProc(); //assign newProcess; added in kg
 
-    /* Update Status Values*/
-    //update Current
-    Current->status = STATUS_RUNNING;       //update to Running Status
-    removeProcessLL(next_Process->pid, next_Process->priority, ReadyList);    //remove from readyList
-
-    //update oldProcess //TODO BLOCKED OR READY?
-    if(oldProcess != NULL) {
-        /*
-         * if oldProcess ?
-         *      add to readyList
-         * else if oldProcess ?
-         *      add to blockedList
-         */
-
-        int proc_slot = (oldProcess->pid)%MAXPROC;
-
-        //Set oldProcess status to ready
-        oldProcess->status = STATUS_READY;
-
-        //add old process to ready list
-        if (addProcessLL(proc_slot, &ReadyList) != 0) {
-            console("Error: %s was not added to ReadyList\nExiting Program\n", oldProcess->name);
-            halt(1);
-        }
+    //If there is no ready process found, exit program with error
+    if(nextProc == NULL){
+        console("Error: There are no ready processes");
+        halt(1);
     }
 
-    //Switch and Start current process
-    context_switch((oldProcess == NULL) ? NULL : &oldProcess->state, &next_Process->state);
+    //if nextProc priority is different from Current ...
+    if(nextProc != Current) {
 
+        /* Handle Time Slice */
+        /* NOTE:
+         * Checking time slice here because
+         * I only care about time if there
+         * are higher priority processes to
+         * take its place*/
+        if (Current != NULL) {   //Verify currently running process exists
+            Current->totalCpuTime += currentTime - Current->switchTime; //TODO: add switch time
+            curPid = Current->pid;  //update current pid value
 
-    //Set next_process to Running
-    next_Process->status == STATUS_RUNNING;
+            /* verify time slice is not exceeded */
+            if (Current->status == STATUS_RUNNING) {  //if current status is running (not blocked)
 
-    //take next proc off ready list
-    //int check = removeProcessLL(oldProcess.pid, oldProcess.priority, ReadyList); // added in kg
+                if ((currentTime - ((Current->switchTime) / 1000)) > TIME_SLICE) {  //if exceeded
 
-    // At this point, we need to figure out whether an old process needs to be put into blocked or ready
+                    proc_slot = (Current->pid) % MAXPROC;     //find proc_slot
+                    if (addProcessLL(proc_slot, &ReadyList) != 0) { //add Current to ready List
 
-    /*
-        if blocked -> set to ready eventually
-        if running -> can set to either blocked or ready
-        if ready -> can set to running
+                        console("Error: %s was not added to ReadyList\nExiting Program\n", Current->name);
+                        halt(1);
+                    }
+                    Current->status = STATUS_READY; //switch status to ready
+                }
+            }
+        }
+        /* Update Status Values*/
+        /* Updating nextProc */
+        removeProcessLL(nextProc->pid, nextProc->priority, ReadyList);    //remove from readyList
+        nextProc->status = STATUS_RUNNING;      //switch status
+        nextProc->switchTime = currentTime;     //save time of process switch
+        p1_switch(curPid, nextProc->pid);
+        prevProc = Current;     //save Current
+        Current = nextProc;     //assign nextProc to Current
 
-        I was doing some research and I found some info on the processes on slide 8
-        I also found some info on context switching on slide 28 if we needed to look at it
-        https://www.cs.swarthmore.edu/~kwebb/cs45/s18/03-Process_Context_Switching_and_Scheduling.pdf
+        enableInterrupts();
 
-        I also found this: https://www.javatpoint.com/what-is-the-context-switching-in-the-operating-system
-        It also has some sections on deadlocks as well
-    */
+        //Switch and Start current process
+        context_switch((prevProc == NULL) ? NULL : &prevProc->state, &nextProc->state);
+
+    }
+    else{   //if nextProc is the same as Current
+        //TODO: do I need this line? is it overwriting
+        // the switch time? because, a switch doesn't
+        // technically happen here
+        nextProc->switchTime = currentTime;
+        console("test");
+    }
 
 } /* dispatcher */
 
@@ -487,6 +527,9 @@ void dispatcher(void)
    ----------------------------------------------------------------------- */
 int sentinel (char * dummy)
 {
+    //determine deadlock scenario
+    //determine if no running processes
+
     DebugConsole("sentinel(): called\n");
 
     while (1)
@@ -499,6 +542,7 @@ int sentinel (char * dummy)
 int zap(int pid)
 {
     // TODO
+    //zap specifies specific code
     //call is_zapped()
     // won't return until zapped prcoess has called quit
     // print error msg and halt(1) if process tries to zap itself
@@ -547,6 +591,8 @@ static void check_deadlock()
 {
     if (check_io() == 1)
         return;
+
+    //NOTES/SCREENSHOTS IN WEEK 5 MEETING - KC
 
     // TODO
     /* Has everyone terminated? */
@@ -837,7 +883,7 @@ int removeProcessLL(int pid, int priority, StatusQueue * pStat){
             if(pSave == pStat[index].pHeadProc){
                 pStat[index].pHeadProc = pSave->pNextProc; //Set next process as head
                 pSave->pNextProc = NULL;                   //Set old head next pointer to NULL
-                if(pStat[index].pHeadProc != NULL) {           //if not only one node on list
+                if(pStat[index].pHeadProc != NULL) {           //if NOT only one node on list
                     pStat[index].pHeadProc->pPrevProc = NULL;  //Set new head prev pointer to NULL
                 }
                 else{           //if only node on list
