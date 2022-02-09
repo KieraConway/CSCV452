@@ -1,10 +1,12 @@
+#include "stdbool.h"
+
 #define DEBUG 1
 
 typedef struct proc_struct proc_struct;
 
 typedef struct proc_struct * proc_ptr;
 
-typedef struct status_struct * pStatusNode;
+//typedef struct status_struct * pStatusNode;
 
 // ADDED FROM WEEK 3 VIDEO
 #define STATUS_EMPTY    0
@@ -18,12 +20,17 @@ typedef struct status_struct * pStatusNode;
 #define SIBLING_LIST_OFFSET (sizeof(proc_ptr))
 #define ZAPPERS_LIST_OFFSET (sizeof(proc_ptr))
 
-/* Structure of Process' Status */
-struct status_struct{
-    proc_ptr    pHeadProc;
-    proc_ptr    pNextProc;      //list of process status
-    proc_ptr    pPrevProc;		//used doubly linked list
-};
+typedef struct statusStruct {
+    proc_ptr process;
+    struct statusStruct *pNextProc;
+    struct statusStruct *pPrevProc;
+} StatusStruct;
+
+typedef struct statusQueue {
+    StatusStruct *pHeadProc;
+    StatusStruct *pTailProc;
+} StatusQueue;
+
 
 struct proc_struct {
     proc_ptr        parent_proc_ptr;		//for referring back to parent process inside of ListInsert() within phase1.c
@@ -45,12 +52,16 @@ struct proc_struct {
     unsigned int    stackSize;
     int             status;         /* READY, BLOCKED, QUIT, etc. */
     /* other fields as needed... */
-    int             startTime;				//process start time
+    int             startTime;				// process start time
     int             switchTime;				// last time switched
+    int             totalCpuTime;           // total run time
+    //TODO:
+    // totalCpuTime += start time - current time/switchTime
 };
 
+/* Lowest Order PSR Bits*/
 struct psr_bits {
-    unsigned int cur_mode:1;
+    unsigned int cur_mode:1;        //variable:bitSize
     unsigned int cur_int_enable:1;
     unsigned int prev_mode:1;
     unsigned int prev_int_enable:1;
@@ -68,3 +79,4 @@ union psr_values {
 #define MAXPRIORITY 1
 #define SENTINELPID 1
 #define SENTINELPRIORITY LOWEST_PRIORITY
+

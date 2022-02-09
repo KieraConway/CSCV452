@@ -1,18 +1,23 @@
 /* ------------------------------------------------------------------------
-   phase1.c
+    phase1.c
 
-   CSCV 452
+    CSCV 452
 
-	Katelyn Griffith
-	Kiera Conway
+    Katelyn Griffith
+    Kiera Conway
    ------------------------------------------------------------------------ */
 /* * * * * * * * * * * * * * * * * * * * *
-* Author Notes
-*   NEXT: 
-*        (1) fix strcmp in fork1
-*        (2) match function prototypes 
-*            from phase1.c and phase1.h
-*   for zapped processes -> use linked list
+ * Author Notes
+ *  NEXT:
+ *      (1) match function prototypes
+ *          from phase1.c and phase1.h
+ *      (2) removeList
+ *      (3) addList - create blocked option
+ *      (4) 429 - implement functions ^
+ *
+ *  for zapped processes -> use linked list
+ *  dont worry about freeing malloc *yet*
+ *  procTable[0] will remain empty
 * * * * * * * * * * * * * * * * * * * * */
 
 #include <stdlib.h>
@@ -22,7 +27,7 @@
 #include "kernel.h"
 
 /* ------------------------- Prototypes ----------------------------------- */
-int sentinel (char *);			//TODO: void-> char
+int sentinel (char *);              //TODO: void-> char
 extern int start1 (char *);
 void dispatcher(void);
 void launch();
@@ -30,13 +35,19 @@ static void enableInterrupts();
 static void check_deadlock();
 
 // added functions for processing kg
-static void check_kernel_mode(const char *functionName); //Check Kernel Mode
-void ClockIntHandler(int dev, void *arg);                //Clock handler
-void DebugConsole(char *format, ...);                    //Debug console
-int ListInsert(proc_ptr *child,proc_struct *table);
+static void check_kernel_mode(const char *functionName);    //Check Kernel Mode
+void ClockIntHandler(int dev, void *arg);                   //Clock handler
+void DebugConsole(char *format, ...);                       //Debug console
+void InitializeLists();                                     //List Initializer
 int GetNextPid();
 int check_io();
 proc_ptr GetNextReadyProc();
+int addProcessLL(int proc_slot, StatusQueue * pStat);
+int removeProcessLL(int pid, int priority, StatusQueue * pStat);
+bool StatusQueueIsFull(const StatusQueue * pStat);
+bool StatusQueueIsEmpty(const StatusQueue * pStat, int index);
+static void CopyToQueue(int proc_slot, StatusStruct * pStat);
+
 
 /* -------------------------- Globals ------------------------------------- */
 
@@ -64,17 +75,17 @@ int totalReadyProc;
 int totalBlockedProc;
 
 /* Process lists  */
-struct status_struct ReadyList[5];      //Ready Processes
-struct status_struct BlockedList[5];    //Blocked Processes
+struct statusQueue ReadyList[6];      //Ready Processes | 6 to include sentinel
+struct statusQueue BlockedList[6];    //Blocked Processes | 6 to include sentinel
 
 /* -------------------------- Functions ----------------------------------- */
 /* ------------------------------------------------------------------------
-   Name - startup
-   Purpose - Initializes process lists and clock interrupt vector.
-	     Start up sentinel process and the test process.
-   Parameters - none, called by USLOSS
-   Returns - nothing
-   Side Effects - lots, starts the whole thing
+    Name - startup
+    Purpose - Initializes process lists and clock interrupt vector.
+        Start up sentinel process and the test process.
+    Parameters - none, called by USLOSS
+    Returns - nothing
+    Side Effects - lots, starts the whole thing
    ----------------------------------------------------------------------- */
 void startup()
 {
@@ -84,12 +95,12 @@ void startup()
     /* initialize the process table */
     memset(ProcTable, 0, sizeof(ProcTable)); // added in kg
 
-    /* Initialize the Ready list, etc. */
+    /* Initialize the total counters lists, etc. */
     DebugConsole("startup(): initializing the Ready & Blocked lists\n");
-    int totalProc = 0;
-    int totalReadyProc = 0;
-    int totalBlockedProc = 0;
-    //ReadyList = NULL; List of ready processes
+    int totalProc = 0;          //Total Processes
+    int totalReadyProc = 0;     //Total Ready Processes
+    int totalBlockedProc = 0;   //Total Blocked Processes
+    InitializeLists();
 
     /* Initialize the clock interrupt handler */
     int_vec[CLOCK_INT] = &ClockIntHandler; // added in kg
@@ -150,11 +161,16 @@ void finish()
    ------------------------------------------------------------------------ */
 int fork1(char *name, int (*func)(char *), char *arg, int stackSize, int priority)
 {
+    /* * * * * * * * * * * * * * * * * * * * * * * *
+     * Notes:
+     *      Forked processes should start ready
+     * * * * * * * * * * * * * * * * * * * * * * * */
     int proc_slot;
     int newPid; // added in kg
 
     DebugConsole("fork1(): creating process %s\n", name);
 
+    /* Error Checking */
     /* test if in kernel mode; halt if in user mode */
     check_kernel_mode(__func__);
 
@@ -180,9 +196,8 @@ int fork1(char *name, int (*func)(char *), char *arg, int stackSize, int priorit
         return -1;
     }
 
-    //TODO FIX strcmp
     // name is NULL
-    if (strcmp(*name, NULL) == 0)
+    if (name && !name[0])
     {
         console("name was null...\n");
         return -1;
@@ -194,6 +209,7 @@ int fork1(char *name, int (*func)(char *), char *arg, int stackSize, int priorit
         console("stackSize was less than minimum stack address...\n");
         return -2;
     }
+    /* End of Error Check */
 
     /* find an empty slot in the process table */
     newPid = GetNextPid();  						//get next process ID
@@ -236,9 +252,26 @@ int fork1(char *name, int (*func)(char *), char *arg, int stackSize, int priorit
     else
         strcpy(ProcTable[proc_slot].start_arg, arg);
 
+    /* * * * * * * * * * * * * * * *
+     * TODO:
+     * if(Current != NULL){
+     *      add to ready list
+     *      connect parents children
+     * }
+     * * * * * * * * * * * * * * * * /
     /* set the parent and child values */
-    ListInsert(&Current->child_proc_ptr, &ProcTable[proc_slot]); // Linked list insert child Params: (head ptr, first node in list)
-    totalReadyProc++; //increment ready process count
+    if(Current != NULL) {
+        ProcTable[proc_slot].parent_proc_ptr = Current;
+        Current->child_proc_ptr = &ProcTable[proc_slot];
+    }
+    else{
+        ProcTable[proc_slot].parent_proc_ptr = NULL;
+    }
+
+    /* Assign to Ready List */
+    addProcessLL(proc_slot, &ReadyList);   //add process to linked list
+
+
 
     /* Initialize context for this process, but use launch function pointer for
      * the initial value of the process's program counter (PC)
@@ -250,15 +283,13 @@ int fork1(char *name, int (*func)(char *), char *arg, int stackSize, int priorit
     /* for future phase(s) */
     p1_fork(ProcTable[proc_slot].pid);
 
-    // added in kg
     if (!init)
     {
         // Call dispatcher
         dispatcher();
     }
 
-    // end of added in
-
+    return newPid;
 } /* fork1 */
 
 /* ------------------------------------------------------------------------
@@ -325,6 +356,11 @@ int join(int *code)
 void quit(int code)
 {
     p1_quit(Current->pid);
+
+    //kill the process
+
+    //context switch
+
 } /* quit */
 
 /* ------------------------------------------------------------------------
@@ -341,16 +377,16 @@ proc_ptr GetNextReadyProc()
 
     /*
      * TODO
-     * check priority lists/array
+     * Check is sentinel is only process
      */
 
-    for (int i = 0; i < MAXPROC; i++)
+    //iterate through 1, 2, 3, 4, 5,
+
+    for (int i = 0; i < (MAXPROC); i++)
     {
-        // Get highest priority process running in process table
-        if ((ProcTable[i].status == STATUS_READY) && (ProcTable[i].priority < highestPrior))
-        {
-            //TODO: if (ProcTable[i].priority is < pNextProc) , remove break
-            pNextProc = &ProcTable[i];
+        //Iterate through ReadyList by index to find next process
+        if(ReadyList[i].pHeadProc){
+            pNextProc = ReadyList[i].pHeadProc->process;
             break;
         }
     }
@@ -376,14 +412,65 @@ void dispatcher(void)
 
     //p1_switch(Current->pid, next_process->pid); TODO
 
-    next_Process = GetNextReadyProc(); //assign newProcess; added in kg
-    oldProcess = Current; 			// added in kg
+    check_kernel_mode(__func__);
 
     /* Make sure Current is pointing to the process we are switching to
     must be done Before context_switch() */
+    next_Process = GetNextReadyProc(); //assign newProcess; added in kg
+    oldProcess = Current;   // added in kg
     Current = next_Process; // added in kg
 
-    context_switch((oldProcess == NULL) ? NULL : &oldProcess->state, &next_Process->state); // added in kg
+    /* Update Status Values*/
+    //update Current
+    Current->status = STATUS_RUNNING;       //update to Running Status
+    removeProcessLL(next_Process->pid, next_Process->priority, ReadyList);    //remove from readyList
+
+    //update oldProcess //TODO BLOCKED OR READY?
+    if(oldProcess != NULL) {
+        /*
+         * if oldProcess ?
+         *      add to readyList
+         * else if oldProcess ?
+         *      add to blockedList
+         */
+
+        int proc_slot = (oldProcess->pid)%MAXPROC;
+
+        //Set oldProcess status to ready
+        oldProcess->status = STATUS_READY;
+
+        //add old process to ready list
+        if (addProcessLL(proc_slot, &ReadyList) != 0) {
+            console("Error: %s was not added to ReadyList\nExiting Program\n", oldProcess->name);
+            halt(1);
+        }
+    }
+
+    //Switch and Start current process
+    context_switch((oldProcess == NULL) ? NULL : &oldProcess->state, &next_Process->state);
+
+
+    //Set next_process to Running
+    next_Process->status == STATUS_RUNNING;
+
+    //take next proc off ready list
+    //int check = removeProcessLL(oldProcess.pid, oldProcess.priority, ReadyList); // added in kg
+
+    // At this point, we need to figure out whether an old process needs to be put into blocked or ready
+
+    /*
+        if blocked -> set to ready eventually
+        if running -> can set to either blocked or ready
+        if ready -> can set to running
+
+        I was doing some research and I found some info on the processes on slide 8
+        I also found some info on context switching on slide 28 if we needed to look at it
+        https://www.cs.swarthmore.edu/~kwebb/cs45/s18/03-Process_Context_Switching_and_Scheduling.pdf
+
+        I also found this: https://www.javatpoint.com/what-is-the-context-switching-in-the-operating-system
+        It also has some sections on deadlocks as well
+    */
+
 } /* dispatcher */
 
 
@@ -423,13 +510,20 @@ int zap(int pid)
 }
 
 
+/*
+ * Returns the pid of Current
+*/
 int getpid(void)
 {
-    // TODO
-    // based on processes, check for running status and return the pid
+    // TODO: check if code works
+    return Current->pid;
 }
 
 
+
+/*
+ * Checks if a process status is zapped
+*/
 int is_zapped(void)
 {
     // TODO
@@ -462,7 +556,30 @@ static void check_deadlock()
     //otherwise
     //halt(1);
 
+    /* Code from Office Hours
+    int readyCount = 0;
+
+    for (int i = HIGHEST_PRIORITY; i < LOWEST_PRIORITY; ++i){
+        readyCount += totalReadyProc[i-1].count;
+    }
+
+    // Has everyone terminated?
+    if(readyCount == 0) {
+        if (numProc > 1) {
+            console("check_deadlock: numProc is: %d\n, numProc");
+            console("check_deadlock: processes still present, halting...\n");
+            halt(1);
+        } else {
+            console("All Processes Completed.\n");
+            halt(0);
+        }
+    }
+    */
+
+
+
 } /* check_deadlock */
+
 
 /*
  * Enable the interrupts.
@@ -471,6 +588,9 @@ static void enableInterrupts()
 {
     check_kernel_mode(__func__);
     /*Confirmed Kernel Mode*/
+
+    //TODO: Check if already enabled
+
     int curPsr = psr_get();
 
     curPsr = curPsr | PSR_CURRENT_INT;
@@ -478,6 +598,7 @@ static void enableInterrupts()
     psr_set(curPsr);
 
 } /* enableInterrupts */
+
 
 /*
  * Disables the interrupts.
@@ -494,6 +615,7 @@ void disableInterrupts()
         psr_set( psr_get() & ~PSR_CURRENT_INT );
 } /* disableInterrupts */
 
+
 /* ------------------------------------------------------------------------
    Name - check_kernel_mode
    Purpose - Checks the PSR for kernel mode and halts if in user mode
@@ -508,7 +630,7 @@ static void check_kernel_mode(const char *functionName)
     DebugConsole("check_kernel_node(): verifying kernel mode for %s\n", functionName);
 
     /* test if in kernel mode; halt if in user mode */
-    psrValue.integer_part = psr_get();
+    psrValue.integer_part = psr_get();  //returns int value of psr
 
     if (psrValue.bits.cur_mode == 0)
     {
@@ -518,6 +640,7 @@ static void check_kernel_mode(const char *functionName)
 
     DebugConsole("Function is in Kernel mode (:\n");
 }
+
 
 /* ------------------------------------------------------------------------
 Name - DebugConsole
@@ -535,9 +658,10 @@ void DebugConsole(char *format, ...)
         console(format, argptr);
         va_end(argptr);
 
-        //console("%s\n", format);
+
     }
 }
+
 
 /* ------------------------------------------------------------------------
 Name - ClockIntHandler
@@ -570,6 +694,7 @@ void ClockIntHandler(int dev, void *arg)
     return;
 }
 
+
 /* ------------------------------------------------------------------------
 Name - GetNextPid
 Purpose - Obtain next pid whose % MAXPROC is open in the ProcTable
@@ -596,20 +721,6 @@ int GetNextPid()
     return newPid;
 }
 
-/* ------------------------------------------------------------------------
- * TODO:
-Name - ListInsert
-Purpose - Add newProcess to list of child process
-Parameters -
-Returns - -1 upon failure, 0 success
-Side Effects -
------------------------------------------------------------------------ */
-
-// Linked list - either singly or doubly
-int ListInsert(proc_ptr *child,proc_struct *table){
-    return 0;
-
-}
 
 /* ------------------------------------------------------------------------
  * TODO:
@@ -625,3 +736,197 @@ int check_io()
     return 0;
 }
 
+
+/* ------------------------------------------------------------------------
+ * TODO:
+Name - InitializeLists
+Purpose - Initialize the values in the Status List
+Parameters -
+Returns -
+Side Effects -
+----------------------------------------------------------------------- */
+void InitializeLists(){
+    int i;
+
+    //initialize head/tail of ReadyList and BlockedList
+    for(i=0; i<5; i++){
+        ReadyList[i].pHeadProc = ReadyList[i].pTailProc = NULL;
+        BlockedList[i].pHeadProc = BlockedList[i].pTailProc = NULL;
+    }
+
+    return;
+}
+
+
+/* ------------------------------------------------------------------------
+ * TODO:
+Name - addProcessLL
+Purpose - Status List to add process to
+Parameters - proc_slot
+Returns - 0 Success, -1 Failure
+Side Effects -
+----------------------------------------------------------------------- */
+int addProcessLL(int proc_slot, StatusQueue * pStat){
+
+    StatusStruct * pNew;    //new Node
+    StatusStruct * pSave;   //save previous location in loop
+
+    //check if queue is full
+    if(StatusQueueIsFull(pStat)){
+        return -1;
+    }
+
+    pNew = (StatusStruct *) malloc (sizeof (StatusStruct));
+
+    //verify allocation
+    if (pNew == NULL){
+        console("Error: Failed to allocate memory for node in linked list"); //Error Flag kg
+        halt(1);    //memory allocation failed
+    }
+
+    CopyToQueue(proc_slot, pNew);
+    int index = (pNew->process->priority)-1;
+
+    pNew->pNextProc = NULL;
+
+    if(StatusQueueIsEmpty(pStat, index)){           //if index is empty...
+        pStat[index].pHeadProc = pNew;                    //add to front of list/index
+    }
+    else{
+        pStat[index].pTailProc->pNextProc = pNew;         //add to end of list/index
+    }
+
+    pStat[index].pTailProc = pNew;                        //reassign pTail to new Tail
+
+    //if readyList
+    if (pStat == ReadyList){    //compare memory locations to verify list type
+        totalReadyProc++;       //increment total ready processes
+    }
+        //if blockedList
+    else if(pStat == BlockedList){ //compare memory locations to verify list type
+        totalBlockedProc++;        //increment total ready processes
+    }
+
+    return 0;
+}
+
+
+/* ------------------------------------------------------------------------
+ * TODO:
+Name - removeProcessLL
+Purpose - Status List to remove process from
+Parameters - proc_slot
+Returns - 0 Success, halt(1) on Failure
+Side Effects -
+----------------------------------------------------------------------- */
+int removeProcessLL(int pid, int priority, StatusQueue * pStat){
+    int index = priority - 1;
+    StatusStruct * pSave;   //pointer for LL
+    int pidFlag = 0;        //verify pid found in list
+    int remFlag = 0;        //verify process removed successfully
+
+    pSave = pStat[index].pHeadProc;    //Find correct index, Start at head
+
+    //iterate through list
+    while(pSave->process != NULL){    //verify not end of list
+
+        if(pSave->process->pid == pid){ //if found process to remove
+            pidFlag = 1;                   //Trigger Flag - PID found
+
+            /* If process to be removed is at head */
+            if(pSave == pStat[index].pHeadProc){
+                pStat[index].pHeadProc = pSave->pNextProc; //Set next process as head
+                pSave->pNextProc = NULL;                   //Set old head next pointer to NULL
+                if(pStat[index].pHeadProc != NULL) {           //if not only one node on list
+                    pStat[index].pHeadProc->pPrevProc = NULL;  //Set new head prev pointer to NULL
+                }
+                else{           //if only node on list
+                    pSave->pPrevProc = NULL;
+                    pStat[index].pTailProc = NULL;
+
+                }
+                remFlag = 1;                               //Trigger Flag - Process Removed
+                break;
+            }
+
+            /* If process to be removed is at tail */
+            else if(pSave == pStat[index].pTailProc){
+                pStat[index].pTailProc = pSave->pPrevProc;  //Set prev process as tail
+                pSave->pPrevProc = NULL;                   //Set old tail prev pointer to NULL
+                pStat[index].pTailProc->pNextProc = NULL; //Set new tail next pointer to NULL
+                remFlag = 1;
+                break;
+            }
+
+            /* If process to be removed is in middle */
+            else{
+                pSave->pPrevProc->pNextProc = pSave->pNextProc; //Set pSave prev next to pSave next
+                pSave->pNextProc->pPrevProc = pSave->pPrevProc; //Set pSave next prev to pSave prev
+                pSave->pNextProc = NULL;    //Set old pNext to NULL
+                pSave->pPrevProc = NULL;    //Set old pPrev to NULL
+                remFlag = 1;
+                break;
+            }
+
+        }
+        else{
+            pSave = pSave->pNextProc;
+        }
+
+    }
+
+    if(pidFlag && remFlag){
+        free(pSave);
+
+        //if readyList
+        if (pStat == ReadyList){    //compare memory locations to verify list type
+            totalReadyProc--;       //decrement total ready processes
+        }
+        //if blockedList
+        else if(pStat == BlockedList){
+            totalBlockedProc--;
+        }
+
+        return 0;
+    }
+    else {
+        if (pidFlag == 0){
+            console("Error: Unable to locate process pid [%d]\n", pid);
+            halt(1);
+        }
+        else if (remFlag == 0) {
+            console("Error: Removal of process [%d] unsuccessful\n", pid);
+            halt(1);
+        }
+    }
+}
+
+
+/*TODO
+ * Check if StatusQueue is Full
+ */
+bool StatusQueueIsFull(const StatusQueue * pStat){
+    //if readyList
+    if (pStat == ReadyList){    //compare memory locations to verify list type
+        return totalReadyProc >= MAXPROC;
+    }
+    else if(pStat == BlockedList){
+        return totalBlockedProc >= MAXPROC;
+    }
+}
+
+bool StatusQueueIsEmpty(const StatusQueue * pStat, int index){
+    return pStat[index].pHeadProc == NULL;
+
+    //if ready
+    //check ready
+    //if blocked
+    //check blocked
+
+}
+/*
+ * Copy to Queue
+ */
+static void CopyToQueue(int proc_slot, StatusStruct * pStat){
+    pStat->process = &ProcTable[proc_slot];
+}
