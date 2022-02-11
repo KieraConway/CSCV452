@@ -35,23 +35,18 @@ typedef struct statusQueue {
 } StatusQueue;
 /* end of status structure lists */
 
-/* Structure for Process Child/Zap Lists */
+/* Structure for Process Child Lists */
 typedef struct procList{
-    proc_ptr pHead;     //pHead of list
-    proc_ptr pTail;     //pTail of
+    struct statusQueue childList[6];    //contains linked list of children
     int total;
 }procList;
 
 /* Primary Process Structure */
 struct proc_struct {
     proc_ptr        parent_proc_ptr;		//Pointer to Parent
-    proc_ptr        child_proc_ptr;         //Pointer to Child
-    proc_ptr        next_sibling_ptr;       //pNext Sibling
-    proc_ptr        prev_sibling_ptr;       //pPrev Sibling
-    proc_ptr        next_zapping_ptr;       //pNext Zapping
-    proc_ptr        prev_zapping_ptr;       //pPrev Zapping
-    procList       children;               //list of all children
-    procList       zappers;                //list of all zap
+    procList        activeChildren;         //list of active children
+    procList        quitChildren;           //list of quit children
+    procList        zappers;                //list of all zap
     char            name[MAXNAME];        /* process's name */
     char            start_arg[MAXARG];    /* args passed to process */
     context         state;                /* current context for process */
@@ -65,8 +60,8 @@ struct proc_struct {
     int             startTime;				// process start time
     int             switchTime;				// last time switched
     int             totalCpuTime;           // total run time
-    //TODO:
-    // totalCpuTime += start time - current time/switchTime
+    int             returnCode;             //
+    //totalCpuTime += start time - current time/switchTime
 };
 
 /* Lowest Order PSR Bits*/
