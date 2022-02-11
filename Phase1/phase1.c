@@ -9,11 +9,7 @@
 /* * * * * * * * * * * * * * * * * * * * *
  * Author Notes
  *  NEXT:
- *      (1) match function prototypes
- *          from phase1.c and phase1.h
- *      (2) removeList
- *      (3) addList - create blocked option
- *      (4) 429 - implement functions ^
+ *      (1) Join() - Psuedo code listed in function
  *
  *  for zapped processes -> use linked list
  *  dont worry about freeing malloc *yet*
@@ -32,6 +28,7 @@ extern int start1 (char *);
 void dispatcher(void);
 void launch();
 static void enableInterrupts();
+static void disableInterrupts();
 static void check_deadlock();
 
 // added functions for processing kg
@@ -42,6 +39,7 @@ void InitializeLists();                                     //List Initializer
 int GetNextPid();
 int check_io();
 proc_ptr GetNextReadyProc();
+void verifyProcess(char *name, int priority, int *func, int stackSize);
 int addProcessLL(int proc_slot, StatusQueue * pStat);
 int removeProcessLL(int pid, int priority, StatusQueue * pStat);
 bool StatusQueueIsFull(const StatusQueue * pStat);
@@ -80,13 +78,13 @@ struct statusQueue BlockedList[6];    //Blocked Processes | 6 to include sentine
 
 /* -------------------------- Functions ----------------------------------- */
 /* ------------------------------------------------------------------------
-    Name - startup
-    Purpose - Initializes process lists and clock interrupt vector.
-        Start up sentinel process and the test process.
-    Parameters - none, called by USLOSS
-    Returns - nothing
-    Side Effects - lots, starts the whole thing
-   ----------------------------------------------------------------------- */
+Name -          startup
+Purpose -       Initializes process lists and clock interrupt vector.
+                Start up sentinel process and the test process.
+Parameters -    none, called by USLOSS
+Returns -       nothing
+Side Effects -  lots, starts the whole thing
+----------------------------------------------------------------------- */
 void startup()
 {
     int i;      /* loop index */
@@ -136,11 +134,11 @@ void startup()
 
 
 /* ------------------------------------------------------------------------
-   Name - finish
-   Purpose - Required by USLOSS
-   Parameters - none
-   Returns - nothing
-   Side Effects - none
+Name -          finish
+Purpose -       Required by USLOSS
+Parameters -    none
+Returns -       nothing
+Side Effects -  none
    ----------------------------------------------------------------------- */
 void finish()
 {
@@ -148,19 +146,18 @@ void finish()
 } /* finish */
 
 /* ------------------------------------------------------------------------
-   Name - fork1
-   Purpose - Gets a new process from the process table and initializes
-             information of the process.  Updates information in the
-             parent process to reflect this child process creation.
-   Parameters - the process procedure address, the size of the stack and
-                the priority to be assigned to the child process.
-   Returns - the process id of the created child or -1 if no child could
-             be created or if priority is not between max and min priority.
-   Side Effects - ReadyList is changed, ProcTable is changed, Current
-                  process information changed
-   ------------------------------------------------------------------------ */
-int fork1(char *name, int (*func)(char *), char *arg, int stackSize, int priority)
-{
+Name -          fork1
+Purpose -       Gets a new process from the process table and initializes
+                    information of the process.  Updates information in the
+                    parent process to reflect this child process creation.
+Parameters -    The process procedure address, the size of the stack and
+                    the priority to be assigned to the child process.
+Returns -       The process id of the created child or -1 if no child could
+                    be created or if priority is not between max and min priority.
+Side Effects -  ReadyList is changed, ProcTable is changed, Current
+                    process information changed
+------------------------------------------------------------------------ */
+int fork1(char *name, int (*func)(char *), char *arg, int stackSize, int priority) {
     /* * * * * * * * * * * * * * * * * * * * * * * *
      * Notes:
      *      Forked processes should start ready
@@ -174,55 +171,19 @@ int fork1(char *name, int (*func)(char *), char *arg, int stackSize, int priorit
     /* test if in kernel mode; halt if in user mode */
     check_kernel_mode(__func__);
 
-    /* Return if stack size is too small-> no empty slots in process table*/
-    // Added flag checks in kg
-    if (totalProc > MAXPROC)
-    {
-        console("There are no empty slots in the process table...\n");
-        return -1;
-    }
-
-    // Out-of-range priorities
-    if ((priority > LOWEST_PRIORITY) || (priority < HIGHEST_PRIORITY))
-    {
-        console("Process priority is out of range. Must be 1 - 5...\n");
-        return -1;
-    }
-
-    // func is NULL
-    if (func == NULL)
-    {
-        console("func was null...\n");
-        return -1;
-    }
-
-    // name is NULL
-    if (name && !name[0])
-    {
-        console("name was null...\n");
-        return -1;
-    }
-
-    // Stacksize is less than USLOSS_MIN_STACK
-    if (stackSize < USLOSS_MIN_STACK)
-    {
-        console("stackSize was less than minimum stack address...\n");
-        return -2;
-    }
-    /* End of Error Check */
+    verifyProcess(name, priority, func, stackSize);
 
     /* find an empty slot in the process table */
-    newPid = GetNextPid();  						//get next process ID
-    proc_slot = newPid % MAXPROC;   				//assign slot
-    ProcTable[proc_slot].pid = newPid;  			//assign pid
-    ProcTable[proc_slot].priority = priority; 		//assign priority
-    ProcTable[proc_slot].status = STATUS_READY; 	//assign READY status
-    ProcTable[proc_slot].stackSize = stackSize; 	//assign stackSize
-    ProcTable[proc_slot].stack = malloc(stackSize) ;//assign stack
+    newPid = GetNextPid();                        //get next process ID
+    proc_slot = newPid % MAXPROC;                //assign slot
+    ProcTable[proc_slot].pid = newPid;            //assign pid
+    ProcTable[proc_slot].priority = priority;        //assign priority
+    ProcTable[proc_slot].status = STATUS_READY;    //assign READY status
+    ProcTable[proc_slot].stackSize = stackSize;    //assign stackSize
+    ProcTable[proc_slot].stack = malloc(stackSize);//assign stack
 
     // Check if out of memory - malloc return value
-    if (ProcTable[proc_slot].stack == NULL)
-    {
+    if (ProcTable[proc_slot].stack == NULL) {
         DebugConsole("Out of memory.\n");
         halt(1);
     }
@@ -230,7 +191,7 @@ int fork1(char *name, int (*func)(char *), char *arg, int stackSize, int priorit
     totalProc++;    //increment total process table count
 
     /* fill-in entry in process table */
-    if ( strlen(name) >= (MAXNAME - 1) ) {
+    if (strlen(name) >= (MAXNAME - 1)) {
         DebugConsole("fork1(): Process name is too long.  Halting...\n");
         halt(1);
     }
@@ -243,13 +204,12 @@ int fork1(char *name, int (*func)(char *), char *arg, int stackSize, int priorit
 
 
     //Process Function Argument(s)
-    if ( arg == NULL )
+    if (arg == NULL)
         ProcTable[proc_slot].start_arg[0] = '\0';
-    else if ( strlen(arg) >= (MAXARG - 1) ) {
+    else if (strlen(arg) >= (MAXARG - 1)) {
         console("fork1(): argument too long.  Halting...\n");
         halt(1);
-    }
-    else
+    } else
         strcpy(ProcTable[proc_slot].start_arg, arg);
 
     /* * * * * * * * * * * * * * * *
@@ -260,10 +220,14 @@ int fork1(char *name, int (*func)(char *), char *arg, int stackSize, int priorit
      * }
      * * * * * * * * * * * * * * * * /
     /* set the parent and child values */
-    if(Current != NULL) {
+    if (Current != NULL) {
         ProcTable[proc_slot].parent_proc_ptr = Current;
-        Current->child_proc_ptr = &ProcTable[proc_slot];
-        //TODO: implement new child lists
+
+        //Add child to end of doubly linked child list
+        if ((addProcessLL(proc_slot, &Current->activeChildren.childList)) == -1){
+            console("Error: Unable to add %s to list of children processes.", ProcTable[proc_slot].name);
+            halt(1);
+        }
     }
     else{
         ProcTable[proc_slot].parent_proc_ptr = NULL;
@@ -294,13 +258,13 @@ int fork1(char *name, int (*func)(char *), char *arg, int stackSize, int priorit
 } /* fork1 */
 
 /* ------------------------------------------------------------------------
-   Name - launch
-   Purpose - Dummy function to enable interrupts and launch a given process
-             upon startup.
-   Parameters - none
-   Returns - nothing
-   Side Effects - enable interrupts
-   ------------------------------------------------------------------------ */
+Name -           launch
+Purpose -        Dummy function to enable interrupts and launch a given process
+                    upon startup.
+Parameters -     none
+Returns -        nothing
+Side Effects -   enable interrupts
+------------------------------------------------------------------------ */
 void launch()
 {
     int result;
@@ -320,35 +284,56 @@ void launch()
 } /* launch */
 
 /* ------------------------------------------------------------------------
-   Name - join
-   Purpose - Wait for a child process (if one has been forked) to quit.  If
-             one has already quit, don't wait.
-   Parameters - a pointer to an int where the termination code of the
-                quitting process is to be stored.
-   Returns - the process id of the quitting child joined on.
-		-1 if the process was zapped in the join
-		-2 if the process has no children
-   Side Effects - If no child process has quit before join is called, the
-                  parent is removed from the ready list and blocked.
+Name -          join
+Purpose -       Wait for a child process (if one has been forked) to quit.  If
+                    one has already quit, don't wait.
+Parameters -    A pointer to an int where the termination code of the
+                    quitting process is to be stored.
+Returns -       The process id of the quitting child joined on.
+		            -1 if the process was zapped in the join
+		            -2 if the process has no children
+Side Effects -  If no child process has quit before join is called, the
+                    parent is removed from the ready list and blocked.
    ------------------------------------------------------------------------ */
 int join(int *code)
 {
+    //Ensure kernel mode
     check_kernel_mode(__func__);
-    //this is where blocking happens
+
+    //todo: maybe?
+    //disableInterrupts();
+
+    //Error Check: Process has no children
+    if(Current->activeChildren.total == 0 && Current->quitChildren.total == 0){
+        console("Error: %s has no children", Current->name);
+        return (-2);
+    }
+    //TODO:
+    // Error Check: child(ren) quit before join() occurred //if quitChildren == 0
+        //return pid and quit status of child
+        //clean child from process table
+
+    Current->status = STATUS_JOIN_BLOCK;    //change parent status to join_block
+    removeProcessLL(Current->pid, Current->priority, ReadyList); //remove from ReadyList
+
+    // Call dispatcher
+    dispatcher();
 
 
-    // if no children return -2
-
-    // children identified -> block parent process until one child exits
-    Current->status = STATUS_JOIN_BLOCK;
-
-    //WHICH CHILD QUIT? RET CODE
-    //get ret code
-    //*code = child-> resultCode
-
+    //DONE//block parent
+        //DONE//Current->status = STATUS_JOIN_BLOCK;
+    //todo: lines below
+    //execute child until quit (save returnCode)
+        //*code = child->returnCode
     //remove child from procTable
-    //free(pChild->stack)
-    //memset(&ProcTable[child_slot], 0, sizeof(proc)struct));
+        //free(pChild->stack)
+        //memset(&ProcTable[child_slot], 0, sizeof(proc)struct));
+    //put parent on ready list
+
+
+
+
+
 
     dispatcher();
 
@@ -356,14 +341,14 @@ int join(int *code)
 
 
 /* ------------------------------------------------------------------------
-   Name - quit
-   Purpose - Stops the child process and notifies the parent of the death by
-             putting child quit info on the parents child completion code
-             list.
-   Parameters - the code to return to the grieving parent
-   Returns - nothing
-   Side Effects - changes the parent of pid child completion status list.
-   ------------------------------------------------------------------------ */
+Name -          quit
+Purpose -       Stops the child process and notifies the parent of the death by
+                    putting child quit info on the parents child completion code
+                    list.
+Parameters -    the code to return to the grieving parent
+Returns -       nothing
+Side Effects -  changes the parent of pid child completion status list.
+------------------------------------------------------------------------ */
 void quit(int code)
 {
     //notify parent that proc is quitting
@@ -387,32 +372,22 @@ void quit(int code)
 } /* quit */
 
 /* ------------------------------------------------------------------------
-   Name - GetNextReadyProc
-   Purpose -
-   Parameters - none
-   Returns - pNextProc: pointer to next ready process
-   Side Effects - the context of the machine is changed
-   ----------------------------------------------------------------------- */
+Name -          GetNextReadyProc
+Purpose -
+Parameters -    None
+Returns -       pointer to next ready process
+Side Effects -  the context of the machine is changed
+----------------------------------------------------------------------- */
 proc_ptr GetNextReadyProc()
 {
-    int highestPrior = 6;
-    proc_ptr pNextProc = NULL;
+    proc_ptr pNextProc = NULL;          //saves found process
     int priorityLimit = LOWEST_PRIORITY;
-
-    /*
-     * TODO
-     * Check is sentinel is only process
-     */
 
     if(Current && Current->status == STATUS_RUNNING){   //If there is current and its running
 
         pNextProc = Current;                            //Set to current
-        if (Current->priority == 1){                    //if current priority is highest priority
-            return pNextProc;                           //return it as the next proc
-        }
-        else{                                           //if not current is not highest
-            priorityLimit = (Current->priority) - 2;    //Set limit to 1 before current index
-        }                                               // -1 because array, -1 to set limit before
+
+        priorityLimit = (Current->priority);    //Set limit to current priority
     }
 
 
@@ -430,28 +405,46 @@ proc_ptr GetNextReadyProc()
 
 
 /* ------------------------------------------------------------------------
-   Name - dispatcher
-   Purpose - dispatches ready processes.  The process with the highest
-             priority (the first on the ready list) is scheduled to
-             run.  The old process is swapped out and the new process
-             swapped in.
-   Parameters - none
-   Returns - nothing
-   Side Effects - the context of the machine is changed
-   ----------------------------------------------------------------------- */
+Name -          dispatcher
+Purpose -       Dispatches ready processes.  The process with the highest
+                    priority (the first on the ready list) is scheduled to
+                    run.  The old process is swapped out and the new process
+                    swapped in.
+Parameters -    None
+Returns -       Nothing
+Side Effects -  The context of the machine is changed
+----------------------------------------------------------------------- */
 void dispatcher(void)
 {
     proc_ptr prevProc;  //previously running process
     proc_ptr nextProc;  //next process to run
     int proc_slot;
-    int curPid = 0;
+    int curPid;
     int currentTime = sys_clock();
+    disableInterrupts();
 
-    //TODO: add disable interrupts here
-    // disableInterrupts();
+    int testTime = sys_clock();
 
-    //TODO: if Current exceed time slot, but is chosen as next, remove from ready list
+    prevProc = Current;     //save current process
 
+    if (Current != NULL) {   //Verify currently running process exists
+        Current->totalCpuTime += currentTime - Current->switchTime; //calculate total cpu time
+        proc_slot = (Current->pid) % MAXPROC;     //find current proc_slot
+        curPid = Current->pid;                    //set current pid
+
+        /* verify time slice is not exceeded */
+        if (Current->status == STATUS_RUNNING) {  //if current status is running (not blocked)
+            if ((currentTime - ((Current->switchTime) / 1000)) > TIME_SLICE) {  //if exceeded
+
+                if (addProcessLL(proc_slot, &ReadyList) != 0) {     //add Current to ready List
+
+                    console("Error: %s was not added to ReadyList\nExiting Program\n", Current->name);
+                    halt(1);
+                }
+                Current->status = STATUS_READY; //switch Current status to ready
+            }
+        }
+    }
     nextProc = GetNextReadyProc(); //assign newProcess; added in kg
 
     //If there is no ready process found, exit program with error
@@ -460,71 +453,50 @@ void dispatcher(void)
         halt(1);
     }
 
-    //if nextProc priority is different from Current ...
-    if(nextProc != Current) {
+    if (nextProc != Current){       //if nextProc priority is different from Current ...
 
-        /* Handle Time Slice */
-        /* NOTE:
-         * Checking time slice here because
-         * I only care about time if there
-         * are higher priority processes to
-         * take its place*/
-        if (Current != NULL) {   //Verify currently running process exists
-            Current->totalCpuTime += currentTime - Current->switchTime; //TODO: add switch time
-            curPid = Current->pid;  //update current pid value
+        if(Current != NULL && Current->status == STATUS_RUNNING){
+            if (addProcessLL(proc_slot, &ReadyList) != 0) {     //add Current to ready List
 
-            /* verify time slice is not exceeded */
-            if (Current->status == STATUS_RUNNING) {  //if current status is running (not blocked)
-
-                if ((currentTime - ((Current->switchTime) / 1000)) > TIME_SLICE) {  //if exceeded
-
-                    proc_slot = (Current->pid) % MAXPROC;     //find proc_slot
-                    if (addProcessLL(proc_slot, &ReadyList) != 0) { //add Current to ready List
-
-                        console("Error: %s was not added to ReadyList\nExiting Program\n", Current->name);
-                        halt(1);
-                    }
-                    Current->status = STATUS_READY; //switch status to ready
-                }
+                console("Error: %s was not added to ReadyList\nExiting Program\n", Current->name);
+                halt(1);
             }
         }
-        /* Update Status Values*/
+
         /* Updating nextProc */
         removeProcessLL(nextProc->pid, nextProc->priority, ReadyList);    //remove from readyList
         nextProc->status = STATUS_RUNNING;      //switch status
         nextProc->switchTime = currentTime;     //save time of process switch
         p1_switch(curPid, nextProc->pid);
-        prevProc = Current;     //save Current
-        Current = nextProc;     //assign nextProc to Current
+        Current = nextProc;     //switch current to nextProc
 
         enableInterrupts();
 
         //Switch and Start current process
         context_switch((prevProc == NULL) ? NULL : &prevProc->state, &nextProc->state);
-
     }
-    else{   //if nextProc is the same as Current
-        //TODO: do I need this line? is it overwriting
-        // the switch time? because, a switch doesn't
-        // technically happen here
-        nextProc->switchTime = currentTime;
-        console("test");
+    else{
+        Current->totalCpuTime += currentTime - Current->switchTime;     //calculate total cpu time
+        Current->switchTime = currentTime;                             //reset switch time
+        if(Current->status == STATUS_READY) {
+            removeProcessLL(Current->pid, Current->priority, ReadyList);
+            Current->status = STATUS_RUNNING; //switch Current status to ready
+        }
     }
-
-} /* dispatcher */
+} /* end of dispatcher */
 
 
 /* ------------------------------------------------------------------------
-   Name - sentinel
-   Purpose - The purpose of the sentinel routine is two-fold.  One
-             responsibility is to keep the system going when all other
-	     processes are blocked.  The other is to detect and report
-	     simple deadlock states.
-   Parameters - none
-   Returns - nothing
-   Side Effects -  if system is in deadlock, print appropriate error
-		   and halt.
-   ----------------------------------------------------------------------- */
+Name -          sentinel
+Purpose -       The purpose of the sentinel routine is two-fold.  One
+                    responsibility is to keep the system going when all other
+	                processes are blocked.  The other is to detect and report
+	                simple deadlock states.
+Parameters -    none
+Returns -       nothing
+Side Effects -  if system is in deadlock, print appropriate error
+		        and halt.
+----------------------------------------------------------------------- */
 int sentinel (char * dummy)
 {
     //determine deadlock scenario
@@ -539,6 +511,15 @@ int sentinel (char * dummy)
     }
 } /* sentinel */
 
+/* ------------------------------------------------------------------------
+ * TODO
+Name -          zap
+Purpose -
+Parameters -    Pid of function to zap
+Returns -       0:  zapped process has called quit
+                -1: calling process itself was zapped while in zap
+Side Effects -
+----------------------------------------------------------------------- */
 int zap(int pid)
 {
     // TODO
@@ -548,15 +529,16 @@ int zap(int pid)
     // print error msg and halt(1) if process tries to zap itself
     // or attempts to zap a non-existent prcoess
 
-    // return values:
-    // -1 - calling process itself was zapped while in zap
-    // 0 - zapped process has called quit
 }
 
-
-/*
- * Returns the pid of Current
-*/
+/* ------------------------------------------------------------------------
+ * TODO
+Name -          getpid
+Purpose -       To find and return the pid of Current
+Parameters -    None
+Returns -       Returns the pid of Current
+Side Effects -
+   ----------------------------------------------------------------------- */
 int getpid(void)
 {
     // TODO: check if code works
@@ -564,10 +546,14 @@ int getpid(void)
 }
 
 
-
-/*
- * Checks if a process status is zapped
-*/
+/* ------------------------------------------------------------------------
+ * TODO
+Name -          is_zapped
+Purpose -
+Parameters -    Checks if a process status is zapped
+Returns -
+Side Effects -
+   ----------------------------------------------------------------------- */
 int is_zapped(void)
 {
     // TODO
@@ -576,7 +562,14 @@ int is_zapped(void)
     //check non existent
 }
 
-
+/* ------------------------------------------------------------------------
+ * TODO
+Name -          dump_processes
+Purpose -
+Parameters -    None
+Returns -
+Side Effects -
+   ----------------------------------------------------------------------- */
 void dump_processes(void)
 {
     // TODO
@@ -585,8 +578,14 @@ void dump_processes(void)
     // PID, parent' PID, priority, process status, # children, CPU time consumed, and name
 }
 
-
-/* check to determine if deadlock has occurred... */
+/* ------------------------------------------------------------------------
+ * TODO
+Name -          check_deadlock
+Purpose -       check to determine if deadlock has occurred
+Parameters -    None
+Returns -
+Side Effects -
+   ----------------------------------------------------------------------- */
 static void check_deadlock()
 {
     if (check_io() == 1)
@@ -624,12 +623,17 @@ static void check_deadlock()
 
 
 
-} /* check_deadlock */
+}
 
 
-/*
- * Enable the interrupts.
- */
+/* ------------------------------------------------------------------------
+ * TODO
+Name -          enableInterrupts
+Purpose -
+Parameters -    None
+Returns -
+Side Effects -
+   ----------------------------------------------------------------------- */
 static void enableInterrupts()
 {
     check_kernel_mode(__func__);
@@ -642,14 +646,18 @@ static void enableInterrupts()
     curPsr = curPsr | PSR_CURRENT_INT;
 
     psr_set(curPsr);
+}
 
-} /* enableInterrupts */
 
-
-/*
- * Disables the interrupts.
- */
-void disableInterrupts()
+/* ------------------------------------------------------------------------
+ * TODO
+Name -          disableInterrupts
+Purpose -
+Parameters -    None
+Returns -
+Side Effects -
+   ----------------------------------------------------------------------- */
+static void disableInterrupts()
 {
     /* turn the interrupts OFF if we are in kernel mode */
     if((PSR_CURRENT_MODE & psr_get()) == 0) {
@@ -659,15 +667,15 @@ void disableInterrupts()
     } else
         /* We ARE in kernel mode */
         psr_set( psr_get() & ~PSR_CURRENT_INT );
-} /* disableInterrupts */
+}
 
 
 /* ------------------------------------------------------------------------
-   Name - check_kernel_mode
-   Purpose - Checks the PSR for kernel mode and halts if in user mode
-   Parameters - functionName
-   Returns - nothing
-   Side Effects - Will halt if not kernel mode
+Name -          check_kernel_mode
+Purpose -       Checks the PSR for kernel mode and halts if in user mode
+Parameters -    functionName
+Returns -       nothing
+Side Effects -  Will halt if not kernel mode
    ----------------------------------------------------------------------- */
 static void check_kernel_mode(const char *functionName)
 {
@@ -689,10 +697,10 @@ static void check_kernel_mode(const char *functionName)
 
 
 /* ------------------------------------------------------------------------
-Name - DebugConsole
-Purpose - Prints the message to the console if in debug mode
-Parameters - format string and va args
-Returns - nothing
+Name -          DebugConsole
+Purpose -       Prints the message to the console if in debug mode
+Parameters -    format string and va args
+Returns -       nothing
 Side Effects -
 ----------------------------------------------------------------------- */
 void DebugConsole(char *format, ...)
@@ -710,10 +718,10 @@ void DebugConsole(char *format, ...)
 
 
 /* ------------------------------------------------------------------------
-Name - ClockIntHandler
+Name -          ClockIntHandler
 Purpose -
 Parameters -
-Returns - nothing
+Returns -       nothing
 Side Effects -
 ----------------------------------------------------------------------- */
 void ClockIntHandler(int dev, void *arg)
@@ -742,10 +750,10 @@ void ClockIntHandler(int dev, void *arg)
 
 
 /* ------------------------------------------------------------------------
-Name - GetNextPid
-Purpose - Obtain next pid whose % MAXPROC is open in the ProcTable
+Name -          GetNextPid
+Purpose -       Obtain next pid whose % MAXPROC is open in the ProcTable
 Parameters -
-Returns - NewPid or -1 if ProcTable is full
+Returns -       NewPid or -1 if ProcTable is full
 Side Effects -
 ----------------------------------------------------------------------- */
 int GetNextPid()
@@ -806,10 +814,47 @@ void InitializeLists(){
 
 /* ------------------------------------------------------------------------
  * TODO:
-Name - addProcessLL
-Purpose - Status List to add process to
-Parameters - proc_slot
-Returns - 0 Success, -1 Failure
+Name - verifyProcess
+Purpose - Verify process input is correct
+Parameters -
+Returns -
+Side Effects -
+----------------------------------------------------------------------- */
+void verifyProcess(char *name, int priority, int *func, int stackSize){
+    // Error Check Process Input
+    if (totalProc > MAXPROC){   // Return if size is too small or proc table is full
+        console("Error: Process Table is Full...\n");
+        halt(1);
+    }
+    else if ((priority > LOWEST_PRIORITY) || (priority < HIGHEST_PRIORITY)){    //Out-of-range priorities
+        console("Error: Process priority [%d] is out of range [1 - 5].\n", priority);
+        halt(1);
+    }
+    else if (func == NULL){                     //Function is NULL
+        console("Error: Function was NULL.\n");
+        halt(1);
+    }
+    else if (name && !name[0]){                 //Name is NULL
+        console("Error: Name was NULL.\n");
+        halt(1);
+    }
+    else if(stackSize < USLOSS_MIN_STACK){     // Stacksize is less than USLOSS_MIN_STACK
+        console("Error: stackSize [%d] was less than minimum stack address[%d].\n", stackSize, USLOSS_MIN_STACK);
+        halt(1);
+    }
+    //No Errors
+    return;
+
+}
+
+
+
+/* ------------------------------------------------------------------------
+ * TODO:
+Name -          addProcessLL
+Purpose -       Status List to add process to
+Parameters -    proc_slot
+Returns -       0 Success, -1 Failure
 Side Effects -
 ----------------------------------------------------------------------- */
 int addProcessLL(int proc_slot, StatusQueue * pStat){
@@ -852,17 +897,22 @@ int addProcessLL(int proc_slot, StatusQueue * pStat){
     else if(pStat == BlockedList){ //compare memory locations to verify list type
         totalBlockedProc++;        //increment total ready processes
     }
-
+    else if(pStat == Current->activeChildren.childList){
+        Current->activeChildren.total++;
+    }
+    else if(pStat == Current->quitChildren.childList){
+        Current->quitChildren.total++;
+    }
     return 0;
 }
 
 
 /* ------------------------------------------------------------------------
  * TODO:
-Name - removeProcessLL
-Purpose - Status List to remove process from
-Parameters - proc_slot
-Returns - 0 Success, halt(1) on Failure
+Name -          removeProcessLL
+Purpose -       Status List to remove process from
+Parameters -    proc_slot
+Returns -       0 Success, halt(1) on Failure
 Side Effects -
 ----------------------------------------------------------------------- */
 int removeProcessLL(int pid, int priority, StatusQueue * pStat){
@@ -948,9 +998,13 @@ int removeProcessLL(int pid, int priority, StatusQueue * pStat){
 }
 
 
-/*TODO
- * Check if StatusQueue is Full
- */
+/* ------------------------------------------------------------------------
+Name -          StatusQueueIsFull
+Purpose -       Checks if status queue pStat is Full
+Parameters -    pStat: Address of status queue
+Returns -       0 if not full, 1 if full
+Side Effects -  none
+----------------------------------------------------------------------- */
 bool StatusQueueIsFull(const StatusQueue * pStat){
     //if readyList
     if (pStat == ReadyList){    //compare memory locations to verify list type
@@ -959,8 +1013,23 @@ bool StatusQueueIsFull(const StatusQueue * pStat){
     else if(pStat == BlockedList){
         return totalBlockedProc >= MAXPROC;
     }
+    else if(pStat == Current->activeChildren.childList){
+        return Current->activeChildren.total >= MAXPROC;
+    }
+    else if(pStat == Current->quitChildren.childList){
+    return Current->quitChildren.total >= MAXPROC;
+    }
 }
 
+
+/* ------------------------------------------------------------------------
+Name -          StatusQueueIsEmpty
+Purpose -       Checks if status queue pStat is empty
+Parameters -    pStat: Address of status queue
+                index: index of pStat to check
+Returns -       0 if not empty, 1 if empty
+Side Effects -  none
+----------------------------------------------------------------------- */
 bool StatusQueueIsEmpty(const StatusQueue * pStat, int index){
     return pStat[index].pHeadProc == NULL;
 
@@ -970,9 +1039,16 @@ bool StatusQueueIsEmpty(const StatusQueue * pStat, int index){
     //check blocked
 
 }
-/*
- * Copy to Queue
- */
+
+
+/* ------------------------------------------------------------------------
+Name -          CopyToQueue
+Purpose -       Copies process at Proctable[proc_slot] to pStat
+Parameters -    proc_slot: location of process in ProcTable
+                pStat: Address of status queue
+Returns -       none
+Side Effects -  none
+----------------------------------------------------------------------- */
 static void CopyToQueue(int proc_slot, StatusStruct * pStat){
     pStat->process = &ProcTable[proc_slot];
 }
