@@ -39,8 +39,8 @@ void InitializeLists();                                     //List Initializer
 int GetNextPid();
 int check_io();
 proc_ptr GetNextReadyProc();
-void verifyProcess(char *name, int priority, int *func, int stackSize);
-int addProcessLL(int proc_slot, StatusQueue * pStat);
+int VerifyProcess(char *name, int priority, int *func, int stackSize);
+void AddProcessLL(int proc_slot, StatusQueue * pStat);
 int removeProcessLL(int pid, int priority, StatusQueue * pStat);
 bool StatusQueueIsFull(const StatusQueue * pStat);
 bool StatusQueueIsEmpty(const StatusQueue * pStat, int index);
@@ -50,7 +50,7 @@ static void CopyToQueue(int proc_slot, StatusStruct * pStat);
 /* -------------------------- Globals ------------------------------------- */
 
 /* Patrick's debugging global variable... */
-int debugflag = 1;
+int debugflag = 0;
 
 /* the process table */
 proc_struct ProcTable[MAXPROC];
@@ -62,7 +62,7 @@ proc_ptr Current;
 unsigned int next_pid = SENTINELPID;
 
 /* number of active processes */
-unsigned int numProc = 0; 	// kg
+unsigned int numProc = 0; 	// kg   //TODO: can we delete this?
 
 /* Error Check: context_switch() Initializer */
 int init = 1;
@@ -94,23 +94,19 @@ void startup()
     memset(ProcTable, 0, sizeof(ProcTable)); // added in kg
 
     /* Initialize the total counters lists, etc. */
-    DebugConsole("startup(): initializing the Ready & Blocked lists\n");
-    int totalProc = 0;          //Total Processes
-    int totalReadyProc = 0;     //Total Ready Processes
-    int totalBlockedProc = 0;   //Total Blocked Processes
+    totalProc = 0;          //Total Processes
+    totalReadyProc = 0;     //Total Ready Processes
+    totalBlockedProc = 0;   //Total Blocked Processes
     InitializeLists();
 
     /* Initialize the clock interrupt handler */
     int_vec[CLOCK_INT] = &ClockIntHandler; // added in kg
 
     /* startup a sentinel process */
-    DebugConsole("startup(): calling fork1() for sentinel\n");
-
     result = fork1("sentinel", sentinel, NULL, USLOSS_MIN_STACK, SENTINELPRIORITY); // call fork1
-
     if (result < 0)
     {
-        DebugConsole("startup(): fork1 of sentinel returned error, halting...\n");
+        DebugConsole("startup(): fork1 of sentinel returned error. Halting...\n");
         halt(1);
     }
 
@@ -122,7 +118,7 @@ void startup()
     result = fork1("start1", start1, NULL, 2 * USLOSS_MIN_STACK, 1);
 
     if (result < 0) {
-        console("startup(): fork1 for start1 returned an error, halting...\n");
+        console("startup(): fork1 for start1 returned an error. Halting...\n");
         halt(1);
     }
 
@@ -158,87 +154,75 @@ Side Effects -  ReadyList is changed, ProcTable is changed, Current
                     process information changed
 ------------------------------------------------------------------------ */
 int fork1(char *name, int (*func)(char *), char *arg, int stackSize, int priority) {
-    /* * * * * * * * * * * * * * * * * * * * * * * *
-     * Notes:
-     *      Forked processes should start ready
-     * * * * * * * * * * * * * * * * * * * * * * * */
+
     int proc_slot;
     int newPid; // added in kg
 
     DebugConsole("fork1(): creating process %s\n", name);
 
-    /* Error Checking */
-    /* test if in kernel mode; halt if in user mode */
+    /*** Error Check: Test if in kernel mode, halt if in user mode ***/
     check_kernel_mode(__func__);
 
-    verifyProcess(name, priority, func, stackSize);
+    /*** Error Check: Verify process parameters are valid ***/
+    int flag;
+    if ((flag = VerifyProcess(name, priority, func, stackSize)) != 0){
+        return flag;
+    }
 
-    /* find an empty slot in the process table */
-    newPid = GetNextPid();                        //get next process ID
-    proc_slot = newPid % MAXPROC;                //assign slot
-    ProcTable[proc_slot].pid = newPid;            //assign pid
-    ProcTable[proc_slot].priority = priority;        //assign priority
-    ProcTable[proc_slot].status = STATUS_READY;    //assign READY status
-    ProcTable[proc_slot].stackSize = stackSize;    //assign stackSize
+
+    /*** Update Process Table with new Process ***/
+    newPid = GetNextPid();                          //get next process ID
+    proc_slot = newPid % MAXPROC;                   //assign slot
+    ProcTable[proc_slot].pid = newPid;              //assign pid
+    ProcTable[proc_slot].priority = priority;       //assign priority
+    ProcTable[proc_slot].status = STATUS_READY;     //assign READY status
+    ProcTable[proc_slot].stackSize = stackSize;     //assign stackSize
     ProcTable[proc_slot].stack = malloc(stackSize);//assign stack
 
-    // Check if out of memory - malloc return value
+
+    // Error Check: Verify malloc return value
     if (ProcTable[proc_slot].stack == NULL) {
-        DebugConsole("Out of memory.\n");
+        DebugConsole("fork1() Error: Out of memory. Halting...\n");
         halt(1);
     }
 
-    totalProc++;    //increment total process table count
-
-    /* fill-in entry in process table */
+    // Error Check:  Check if name length is too large
     if (strlen(name) >= (MAXNAME - 1)) {
-        DebugConsole("fork1(): Process name is too long.  Halting...\n");
+        DebugConsole("fork1() Error: Process name is too long. Halting...\n");
         halt(1);
     }
 
-    //Process Name
+    //Add Process Name
     strcpy(ProcTable[proc_slot].name, name);
 
-    //Process Function
+    //Add Process Function
     ProcTable[proc_slot].start_func = func;
 
-
-    //Process Function Argument(s)
+    //Add Process Function Argument(s)
     if (arg == NULL)
         ProcTable[proc_slot].start_arg[0] = '\0';
     else if (strlen(arg) >= (MAXARG - 1)) {
-        console("fork1(): argument too long.  Halting...\n");
+        console("fork1() Error: Argument too long. Halting...\n");
         halt(1);
     } else
         strcpy(ProcTable[proc_slot].start_arg, arg);
 
-    /* * * * * * * * * * * * * * * *
-     * TODO:
-     * if(Current != NULL){
-     *      add to ready list
-     *      connect parents children
-     * }
-     * * * * * * * * * * * * * * * * /
-    /* set the parent and child values */
+    //Add the parent and child values if currently running process
     if (Current != NULL) {
         ProcTable[proc_slot].parent_proc_ptr = Current;
 
         //Add child to end of doubly linked child list
-        if ((addProcessLL(proc_slot, &Current->activeChildren.childList)) == -1){
-            console("Error: Unable to add %s to list of children processes.", ProcTable[proc_slot].name);
-            halt(1);
-        }
+        AddProcessLL(proc_slot, &Current->activeChildren.procList);
     }
-    else{
+    else{   //if no current process, add NULL for parent
         ProcTable[proc_slot].parent_proc_ptr = NULL;
     }
-
-    /* Assign to Ready List */
-    addProcessLL(proc_slot, &ReadyList);   //add process to linked list
+    ///end Process Table update
 
 
-
-    /* Initialize context for this process, but use launch function pointer for
+    /*** Initialization ***/
+    /*
+     * Initialize context for this process, but use launch function pointer for
      * the initial value of the process's program counter (PC)
      */
     context_init(&(ProcTable[proc_slot].state), psr_get(),
@@ -247,10 +231,17 @@ int fork1(char *name, int (*func)(char *), char *arg, int stackSize, int priorit
 
     /* for future phase(s) */
     p1_fork(ProcTable[proc_slot].pid);
+    ///end initialization
 
-    if (!init)
+
+    /*** Assign to Ready List and Increment counters ***/
+    AddProcessLL(proc_slot, &ReadyList);
+    totalProc++;
+
+
+    /*** Call Dispatcher ***/
+    if (!init)      //Prevents dispatcher from running without start1
     {
-        // Call dispatcher
         dispatcher();
     }
 
@@ -277,7 +268,7 @@ void launch()
     /* Call the function passed to fork1, and capture its return value */
     result = Current->start_func(Current->start_arg);
 
-    DebugConsole("Process %d returned to launch\n", Current->pid);
+    DebugConsole("Process %d returned to launch\n", getpid());
 
     quit(result);
 
@@ -297,45 +288,103 @@ Side Effects -  If no child process has quit before join is called, the
    ------------------------------------------------------------------------ */
 int join(int *code)
 {
-    //Ensure kernel mode
+    int childPriority;          //used for add/remove list
+    int child_proc_slot;        //used for memset
+    int curr_proc_slot;         //used for memset
+    int childPID;               //return pid of quitting child
+    int savedQuitTime;          //holds the lowest/oldest process quit time
+    StatusStruct *pQuitChild = NULL;   //save QuitChild process
+    StatusStruct *pChild;       //used to iterate quitChildren list
+    StatusStruct *pSaveChild;   //used to iterate quitChildren list
+
+    /*** Ensure kernel mode ***/
     check_kernel_mode(__func__);
 
-    //todo: maybe?
-    //disableInterrupts();
 
-    //Error Check: Process has no children
+    /*** Error Check: Process has no children ***/
     if(Current->activeChildren.total == 0 && Current->quitChildren.total == 0){
         console("Error: %s has no children", Current->name);
-        return (-2);
+        return (-2);    //return -2: process has no children
     }
-    //TODO:
-    // Error Check: child(ren) quit before join() occurred //if quitChildren == 0
-        //return pid and quit status of child
-        //clean child from process table
 
-    Current->status = STATUS_JOIN_BLOCK;    //change parent status to join_block
-    removeProcessLL(Current->pid, Current->priority, ReadyList); //remove from ReadyList
+    /*** Check: Process child quit before join() ***/
+    if(Current->quitChildren.total > 0) {
 
-    // Call dispatcher
-    dispatcher();
+        /* Iterate through quitChildren to find oldest quit child*/
+        for (int index = 0; index < LOWEST_PRIORITY; index++) {   //For each index in array
+            int init = 0;       //initialize Flag
+            pChild = pSaveChild = Current->quitChildren.procList[index].pHeadProc;   //Set to pHead of index
 
+            while(pChild){
+                if(pChild->process->quitTime < pSaveChild->process->quitTime ) {
+                    pSaveChild = pChild;
+                }
 
-    //DONE//block parent
-        //DONE//Current->status = STATUS_JOIN_BLOCK;
-    //todo: lines below
-    //execute child until quit (save returnCode)
-        //*code = child->returnCode
-    //remove child from procTable
-        //free(pChild->stack)
-        //memset(&ProcTable[child_slot], 0, sizeof(proc)struct));
-    //put parent on ready list
+                pChild = pChild->pNextProc; //increment pChild
+            }
 
-
-
+            // if pQuit is NULL or newer than pChild
+            if (pSaveChild && (!pQuitChild || pQuitChild->process->quitTime > pSaveChild->process->quitTime)) {
+                pQuitChild = pSaveChild;    //overwrite with pChild
+            }
+        }
 
 
+        /*** Complete Child Cleanup ***/
+        childPriority = pQuitChild->process->priority;
+        child_proc_slot = (pQuitChild->process->pid) % MAXPROC; //find proc_slot
 
-    dispatcher();
+        *code = pQuitChild->process->returnCode;        //save quit status of pQuitChild
+        childPID = pQuitChild->process->pid;            //save pid of quitting child
+
+        removeProcessLL(childPID, childPriority, Current->quitChildren.procList);
+
+        totalProc--;                            // decrement total proc
+
+        free(pQuitChild->process->stack);   //free malloc
+        memset(&ProcTable[child_proc_slot], 0, sizeof(proc_struct));  //reinitialize ProcTable
+
+        return childPID;
+    }
+
+    /*** Error Check: No unjoined child has quit(), wait ***/
+    if(Current->quitChildren.total == 0){
+        Current->status = STATUS_JOIN_BLOCK;
+        dispatcher();
+    }
+
+    /*** Error Check: Process was zapped in join ***/
+    if(is_zapped()){
+        return -1;
+    }
+
+    /*** Get Return Code from new quitChild ***/
+    /* Iterate through quitChildren to find oldest quit child*/
+    for (int index = 0; index < LOWEST_PRIORITY; index++) {   //For each index in array
+
+        if(Current->quitChildren.procList[index].pHeadProc){  //if found quit process
+            pQuitChild = Current->quitChildren.procList[index].pHeadProc;  //set equal to quitChild
+            break;
+        }
+
+    }
+
+
+    /*** Complete Child Cleanup ***/
+    childPriority = pQuitChild->process->priority;
+    child_proc_slot = (pQuitChild->process->pid) % MAXPROC; //find proc_slot
+
+    *code = pQuitChild->process->returnCode;        //save quit status of pQuitChild
+    childPID = pQuitChild->process->pid;            //save pid of quitting child
+
+    removeProcessLL(childPID, childPriority, Current->quitChildren.procList);
+
+    free(pQuitChild->process->stack);   //free malloc
+    memset(&ProcTable[child_proc_slot], 0, sizeof(proc_struct));  //reinitialize ProcTable
+
+
+
+    return childPID;
 
 } /* join */
 
@@ -351,24 +400,98 @@ Side Effects -  changes the parent of pid child completion status list.
 ------------------------------------------------------------------------ */
 void quit(int code)
 {
-    //notify parent that proc is quitting
-    //pass code to parent (join returns, join (code))
-    //add code to process table (i.e name, pid, etc)
-    //quit(-1) = the code is -1
+    StatusStruct *pActiveChild = NULL;  //used to iterate procList
+    StatusStruct *pQuitChild = NULL;    //used to iterate procList
+    StatusStruct *pZapper = NULL;       //used to iterate zapList
+    proc_ptr pParent;       //used to modify parent information
 
-    //save return code
-    //Current->resultCode = code;
+    /*** Error Check: Test if in kernel mode, halt if in user mode ***/
+    check_kernel_mode(__func__);    //verify kernel mode
 
-    //tell the parent process to un-block
-    //Current-> status = status ready
+    disableInterrupts();                        //prevent race conditions
 
-    //change status to quit
-    //current status = quit;
-    //do NOT kill here, parent will kill
+    /*** Iterate through procList to check for active children ***/
+    for (int index = 0; index < LOWEST_PRIORITY; index++) {   //For each index in array
+        pActiveChild = Current->activeChildren.procList[index].pHeadProc; //Set to pHead of index
+
+        while(pActiveChild && pActiveChild->process != NULL){                     //verify not end of procList
+            if (pActiveChild->process->status == STATUS_READY){   //status redundancy check
+                console("Error: Process with active children attempting to quit. Halting...\n");
+                halt(1);
+            }
+
+            pActiveChild = pActiveChild->pNextProc; //iterate to next child on list
+        }
+    } //here if no active children
+
+    /*** Iterate through procList to remove quit children ***/
+    for (int index = 0; index < LOWEST_PRIORITY; index++) {   //For each index in array
+        pQuitChild = Current->quitChildren.procList[index].pHeadProc;   //Set to pHead of index
+
+        while(pQuitChild && pQuitChild->process != NULL){                        //verify not end of procList
+
+            //remove from Current quit Children list
+            removeProcessLL(pQuitChild->process->pid, pQuitChild->process->priority, Current->quitChildren.procList);
+
+            pQuitChild = pQuitChild->pNextProc; //iterate to next zapper on list
+        }
+    } //here if no active children
+
+
+    /*** Iterate through procList to check for zappers and unblock ALL ***/
+    for (int index = 0; index < LOWEST_PRIORITY; index++) {   //For each index in array
+        pZapper = Current->zappers.procList[index].pHeadProc; //Set to pHead of index
+
+        while(pZapper && pZapper->process != NULL){                        //verify not end of procList
+            if (pZapper->process->status == STATUS_ZAP_BLOCK){  //status redundancy check
+                pZapper->process->status = STATUS_READY;        //unblock zapper
+
+                //remove from Current zappers list
+                removeProcessLL(pZapper->process->pid, pZapper->process->priority, Current->zappers.procList);
+
+                //add zapper to ready list
+                int zap_proc_slot = (pZapper->process->pid) % MAXPROC;  //find proc_slot
+                AddProcessLL(zap_proc_slot, &ReadyList);
+            }
+            pZapper = pZapper->pNextProc; //iterate to next zapper on list
+        }
+    }  // all zapper unblocked
+
+
+    /*** Check if Current has a Parent ***/
+    if(Current->parent_proc_ptr != NULL){
+
+        //save parent to pParent
+        pParent = Current->parent_proc_ptr;
+
+        //remove from activeChildren list
+        removeProcessLL(Current->pid, Current->priority, pParent->activeChildren.procList);
+
+
+        //add to quitChildren list
+        int curr_proc_slot = (Current->pid) % MAXPROC;     //find current proc_slot
+        AddProcessLL(curr_proc_slot, &pParent->quitChildren.procList);
+
+        //Check if parent is blocked, unblock and add to ready table
+        if(pParent->status == STATUS_JOIN_BLOCK || pParent->status == STATUS_ZAP_BLOCK){
+            pParent->status = STATUS_READY;                    //update status
+            int par_proc_slot = (pParent->pid) % MAXPROC;       //find parent proc_slot
+            AddProcessLL(par_proc_slot, &ReadyList);    //add to ready list
+        }
+
+    }
+
+    /* Update Current Information and Counters */
+    Current->status = STATUS_QUIT;      // update status
+    Current->quitTime = sys_clock();    // update quit time
+    Current->returnCode = code;         // save return code to pass
+    // Parent will do rest of cleanup in join()
+
+    totalProc--;
 
     p1_quit(Current->pid);
 
-    //dispatcher();
+    dispatcher();
 } /* quit */
 
 /* ------------------------------------------------------------------------
@@ -421,7 +544,7 @@ void dispatcher(void)
     int proc_slot;
     int curPid;
     int currentTime = sys_clock();
-    disableInterrupts();
+    disableInterrupts();                        //prevent race conditions
 
     int testTime = sys_clock();
 
@@ -429,18 +552,15 @@ void dispatcher(void)
 
     if (Current != NULL) {   //Verify currently running process exists
         Current->totalCpuTime += currentTime - Current->switchTime; //calculate total cpu time
-        proc_slot = (Current->pid) % MAXPROC;     //find current proc_slot
-        curPid = Current->pid;                    //set current pid
+        curPid = getpid();                    //set current pid
+        proc_slot = (curPid) % MAXPROC;     //find current proc_slot
+
 
         /* verify time slice is not exceeded */
         if (Current->status == STATUS_RUNNING) {  //if current status is running (not blocked)
             if ((currentTime - ((Current->switchTime) / 1000)) > TIME_SLICE) {  //if exceeded
 
-                if (addProcessLL(proc_slot, &ReadyList) != 0) {     //add Current to ready List
-
-                    console("Error: %s was not added to ReadyList\nExiting Program\n", Current->name);
-                    halt(1);
-                }
+                AddProcessLL(proc_slot, &ReadyList);
                 Current->status = STATUS_READY; //switch Current status to ready
             }
         }
@@ -449,22 +569,20 @@ void dispatcher(void)
 
     //If there is no ready process found, exit program with error
     if(nextProc == NULL){
-        console("Error: There are no ready processes");
+        console("Error: There are no ready processes. Halting...\n");
         halt(1);
     }
 
     if (nextProc != Current){       //if nextProc priority is different from Current ...
 
         if(Current != NULL && Current->status == STATUS_RUNNING){
-            if (addProcessLL(proc_slot, &ReadyList) != 0) {     //add Current to ready List
-
-                console("Error: %s was not added to ReadyList\nExiting Program\n", Current->name);
-                halt(1);
-            }
+            AddProcessLL(proc_slot, &ReadyList);
+            Current->status = STATUS_READY; //switch Current status to ready
         }
 
         /* Updating nextProc */
         removeProcessLL(nextProc->pid, nextProc->priority, ReadyList);    //remove from readyList
+
         nextProc->status = STATUS_RUNNING;      //switch status
         nextProc->switchTime = currentTime;     //save time of process switch
         p1_switch(curPid, nextProc->pid);
@@ -481,6 +599,7 @@ void dispatcher(void)
         if(Current->status == STATUS_READY) {
             removeProcessLL(Current->pid, Current->priority, ReadyList);
             Current->status = STATUS_RUNNING; //switch Current status to ready
+
         }
     }
 } /* end of dispatcher */
@@ -522,48 +641,80 @@ Side Effects -
 ----------------------------------------------------------------------- */
 int zap(int pid)
 {
-    // TODO
-    //zap specifies specific code
-    //call is_zapped()
-    // won't return until zapped prcoess has called quit
-    // print error msg and halt(1) if process tries to zap itself
-    // or attempts to zap a non-existent prcoess
+    int zapped_proc_slot = pid % MAXPROC;           //find zapped_proc_slot
+    int cur_proc_slot = Current->pid % MAXPROC;     //find current proc_slot
+    proc_ptr zappedProc;                            //pointer to process of pid
 
+    /* test if in kernel mode; halt if in user mode */
+    check_kernel_mode(__func__);
+
+    /*** Error Check: Process tried to Zap non-existent process ***/
+    if(ProcTable[zapped_proc_slot].status == STATUS_EMPTY){
+        console("Error: Process tried to Zap non-existent process. Halting...\n");
+        halt(1);
+    }
+
+    /*** Error Check: Process tried to Zap itself ***/
+    if(getpid() == pid) {   //if current pid is same as parameter pid
+        console("Error: Process tried to Zap itself. Halting...\n");
+        halt(1);
+    }
+
+    /*** Error Check: Zapped Process has called quit ***/
+    if(ProcTable[zapped_proc_slot].status == STATUS_QUIT){
+        console("Error: Zapped Process has called quit.\n");
+        return 0;
+    }
+
+    //Change zapped process status
+    ProcTable[zapped_proc_slot].status = STATUS_ZAPPED;
+
+    //add Current as zapper to zapped process   ///TODO: CHECK ADD COUNT PROCESS
+    AddProcessLL(cur_proc_slot, ProcTable[zapped_proc_slot].zappers.procList);
+    ProcTable[zapped_proc_slot].zappers.total++;
+
+    //block current
+    Current->status = STATUS_ZAP_BLOCK;
+
+    //call dispatcher
+    dispatcher();
+
+    /*** Error Check: calling process itself was zapped while in zap ***/
+    if(is_zapped()){
+        console("Error: Calling process itself was zapped while in zap.\n");
+        return -1;
+    }
+
+    return 0;   //zapped process has quit successfully
 }
 
 /* ------------------------------------------------------------------------
- * TODO
-Name -          getpid
-Purpose -       To find and return the pid of Current
-Parameters -    None
-Returns -       Returns the pid of Current
-Side Effects -
-   ----------------------------------------------------------------------- */
-int getpid(void)
-{
-    // TODO: check if code works
-    return Current->pid;
-}
-
-
-/* ------------------------------------------------------------------------
- * TODO
+ * TODO: Debug to check if works - check non existent?
 Name -          is_zapped
 Purpose -
 Parameters -    Checks if a process status is zapped
 Returns -
 Side Effects -
    ----------------------------------------------------------------------- */
-int is_zapped(void)
-{
-    // TODO
-    // return 0 if not zapped
-    // return 1 if zapped
-    //check non existent
+int is_zapped(void) {
+    return (Current->status == STATUS_ZAPPED);
 }
 
 /* ------------------------------------------------------------------------
- * TODO
+ * TODO: check if code works
+Name -          getpid
+Purpose -       To find and return the pid of Current
+Parameters -    None
+Returns -       Returns the pid of Current
+Side Effects -
+   ----------------------------------------------------------------------- */
+int getpid(void) {
+    return Current->pid;
+}
+
+
+/* ------------------------------------------------------------------------
+ * TODO: Fix formatting
 Name -          dump_processes
 Purpose -
 Parameters -    None
@@ -572,10 +723,25 @@ Side Effects -
    ----------------------------------------------------------------------- */
 void dump_processes(void)
 {
-    // TODO
-    // prints process ifnro to console
-    // for each PCB, output:
-    // PID, parent' PID, priority, process status, # children, CPU time consumed, and name
+    // array so status will print word instead of value
+    char* stats[8] = {"Empty", "RUNNING", "READY",
+                     "QUIT", "ZAP_BLOCK", "JOIN_BLOCK",
+                     "ZAPPED", "LAST"};
+
+    /*** Print Header ***/
+    printf("\n\n%-10s %-10s %-10s %-10s %-10s %-10s %-10s\n",
+           "PID", "Parent", "Priority", "Status", "# Kids", "CPUtime", "Name");
+    printf("--------------------------------------------------------\n");
+
+    /*** Dump Process Table ***/
+    for (int i = 0; i < MAXPROC; i++)
+    {
+        proc_struct temp = ProcTable[i];
+
+        printf("\n\n%-10d %-10d %-10d %-10d %-10d %-10d %-10s\n",
+               temp.pid, temp.parent_proc_ptr->pid, temp.priority,
+               stats[temp.status], temp.activeChildren.total, temp.totalCpuTime, temp.name);
+    }
 }
 
 /* ------------------------------------------------------------------------
@@ -583,48 +749,44 @@ void dump_processes(void)
 Name -          check_deadlock
 Purpose -       check to determine if deadlock has occurred
 Parameters -    None
-Returns -
+Returns -       None
 Side Effects -
    ----------------------------------------------------------------------- */
-static void check_deadlock()
-{
-    if (check_io() == 1)
-        return;
-
-    //NOTES/SCREENSHOTS IN WEEK 5 MEETING - KC
-
-    // TODO
-    /* Has everyone terminated? */
-    // check the number of process
-    // if there is only one active prcoess
-    // halt(0);
-    //otherwise
-    //halt(1);
-
-    /* Code from Office Hours
+static void check_deadlock() {
     int readyCount = 0;
+    StatusStruct *pSave;   //save previous, enables iteration
 
-    for (int i = HIGHEST_PRIORITY; i < LOWEST_PRIORITY; ++i){
-        readyCount += totalReadyProc[i-1].count;
+    //TODO: do we need to check blocked proc also? to just ready/active?
+
+    /* Iterate through ReadyList */
+    for (int index = 0; index < LOWEST_PRIORITY; index++) {   //For each index in array
+
+        pSave = ReadyList[index].pHeadProc;    //Set pSave = to pHead of that index
+
+        //todo: may need a if (pSave != NULL) before while loop
+
+        while (pSave && pSave->process != NULL) {    //Verify not end of list
+            readyCount += 1;
+            pSave = pSave->pNextProc;   //iterate to next process on list
+        }
     }
 
-    // Has everyone terminated?
-    if(readyCount == 0) {
-        if (numProc > 1) {
-            console("check_deadlock: numProc is: %d\n, numProc");
-            console("check_deadlock: processes still present, halting...\n");
+    /* Error Check - totalReadyProc and readyCount should be equal*/
+    if (readyCount != totalReadyProc) {
+        DebugConsole("Error: totalReadyProc [%d] and readyCount [%d] are not equal. Halting...\n", totalReadyProc, readyCount);
+        halt(1);
+    }
+
+    if (readyCount == 0) {        //if ReadyList is empty
+        if (totalProc > 1) {      //if there are any processes other than sentinel on the ProcTable
+            console("check_deadlock Error: %d processes still active. Halting...\n", totalProc);
             halt(1);
         } else {
-            console("All Processes Completed.\n");
+            console("Success: All processes completed.\n");
             halt(0);
         }
     }
-    */
-
-
-
 }
-
 
 /* ------------------------------------------------------------------------
  * TODO
@@ -662,7 +824,7 @@ static void disableInterrupts()
     /* turn the interrupts OFF if we are in kernel mode */
     if((PSR_CURRENT_MODE & psr_get()) == 0) {
         //not in kernel mode
-        console("Kernel Error: Not in kernel mode, may not disable interrupts\n");
+        console("Kernel Error: Not in kernel mode, may not disable interrupts. Halting...\n");
         halt(1);
     } else
         /* We ARE in kernel mode */
@@ -688,7 +850,7 @@ static void check_kernel_mode(const char *functionName)
 
     if (psrValue.bits.cur_mode == 0)
     {
-        console("Kernel mode expected, but function called in user mode.\n");
+        console("Kernel mode expected, but function called in user mode. Halting...\n");
         halt(1);
     }
 
@@ -813,37 +975,40 @@ void InitializeLists(){
 
 
 /* ------------------------------------------------------------------------
- * TODO:
-Name - verifyProcess
-Purpose - Verify process input is correct
+Name -          verifyProcess
+Purpose -       Verify process input is correct
 Parameters -
-Returns -
+Returns -       0   Success
+                -1  Invalid input
+                -2  Invalid stackSize
 Side Effects -
 ----------------------------------------------------------------------- */
-void verifyProcess(char *name, int priority, int *func, int stackSize){
+int VerifyProcess(char *name, int priority, int *func, int stackSize){
+    int flag;
+
     // Error Check Process Input
     if (totalProc > MAXPROC){   // Return if size is too small or proc table is full
         console("Error: Process Table is Full...\n");
-        halt(1);
+        return flag = -1;
     }
     else if ((priority > LOWEST_PRIORITY) || (priority < HIGHEST_PRIORITY)){    //Out-of-range priorities
         console("Error: Process priority [%d] is out of range [1 - 5].\n", priority);
-        halt(1);
+        return flag = -1;
     }
     else if (func == NULL){                     //Function is NULL
         console("Error: Function was NULL.\n");
-        halt(1);
+        return flag = -1;
     }
     else if (name && !name[0]){                 //Name is NULL
         console("Error: Name was NULL.\n");
-        halt(1);
+        return flag = -1;
     }
     else if(stackSize < USLOSS_MIN_STACK){     // Stacksize is less than USLOSS_MIN_STACK
         console("Error: stackSize [%d] was less than minimum stack address[%d].\n", stackSize, USLOSS_MIN_STACK);
-        halt(1);
+        return flag = -2;
     }
     //No Errors
-    return;
+    return 0;
 
 }
 
@@ -851,27 +1016,28 @@ void verifyProcess(char *name, int priority, int *func, int stackSize){
 
 /* ------------------------------------------------------------------------
  * TODO:
-Name -          addProcessLL
+Name -          AddProcessLL
 Purpose -       Status List to add process to
 Parameters -    proc_slot
-Returns -       0 Success, -1 Failure
+Returns -       none, halt(1) on failure
 Side Effects -
 ----------------------------------------------------------------------- */
-int addProcessLL(int proc_slot, StatusQueue * pStat){
+void AddProcessLL(int proc_slot, StatusQueue * pStat){
 
     StatusStruct * pNew;    //new Node
     StatusStruct * pSave;   //save previous location in loop
 
     //check if queue is full
     if(StatusQueueIsFull(pStat)){
-        return -1;
+        console("Error: Queue is full.\n");
+        halt(1);    //memory allocation failed
     }
 
     pNew = (StatusStruct *) malloc (sizeof (StatusStruct));
 
     //verify allocation
     if (pNew == NULL){
-        console("Error: Failed to allocate memory for node in linked list"); //Error Flag kg
+        console("Error: Failed to allocate memory for node in linked list. Halting...\n"); //Error Flag kg
         halt(1);    //memory allocation failed
     }
 
@@ -889,26 +1055,36 @@ int addProcessLL(int proc_slot, StatusQueue * pStat){
 
     pStat[index].pTailProc = pNew;                        //reassign pTail to new Tail
 
-    //if readyList
+    /*** Increment Counter ***/
     if (pStat == ReadyList){    //compare memory locations to verify list type
         totalReadyProc++;       //increment total ready processes
     }
-        //if blockedList
     else if(pStat == BlockedList){ //compare memory locations to verify list type
-        totalBlockedProc++;        //increment total ready processes
+        totalBlockedProc++;        //increment total blocked processes
     }
-    else if(pStat == Current->activeChildren.childList){
-        Current->activeChildren.total++;
+    else if(pStat == Current->activeChildren.procList){ //compare memory locations to verify list type
+        Current->activeChildren.total++;                //increment total activeChildren processes
     }
-    else if(pStat == Current->quitChildren.childList){
-        Current->quitChildren.total++;
+    else if(pStat == Current->quitChildren.procList){   //compare memory locations to verify list type
+        Current->quitChildren.total++;                  //increment total quitChildren processes
     }
-    return 0;
+    else if(pStat == Current->zappers.procList){        //compare memory locations to verify list type
+        Current->zappers.total++;                       //increment total zappers processes
+    }
+    else if(pStat == Current->parent_proc_ptr->quitChildren.procList){
+        Current->parent_proc_ptr->quitChildren.total++;
+    }
+    else if(pStat == Current->parent_proc_ptr->activeChildren.procList){
+        Current->parent_proc_ptr->activeChildren.total++;
+    }
+    else if(pStat == Current->parent_proc_ptr->zappers.procList){
+        Current->parent_proc_ptr->zappers.total++;
+    }
 }
 
 
 /* ------------------------------------------------------------------------
- * TODO:
+ * TODO: Should we have it return a pointer to removed function? It will help w/ zappers
 Name -          removeProcessLL
 Purpose -       Status List to remove process from
 Parameters -    proc_slot
@@ -922,6 +1098,11 @@ int removeProcessLL(int pid, int priority, StatusQueue * pStat){
     int remFlag = 0;        //verify process removed successfully
 
     pSave = pStat[index].pHeadProc;    //Find correct index, Start at head
+
+    if(pSave == NULL){  //Check that pSave returned process
+        console("Error: Process %d is not on list. Halting...\n", pid );
+        halt(1);
+    }
 
     //iterate through list
     while(pSave->process != NULL){    //verify not end of list
@@ -974,24 +1155,41 @@ int removeProcessLL(int pid, int priority, StatusQueue * pStat){
     if(pidFlag && remFlag){
         free(pSave);
 
-        //if readyList
+        /*** Decrement Counter ***/
         if (pStat == ReadyList){    //compare memory locations to verify list type
             totalReadyProc--;       //decrement total ready processes
         }
-        //if blockedList
-        else if(pStat == BlockedList){
-            totalBlockedProc--;
+        else if(pStat == BlockedList){ //compare memory locations to verify list type
+            totalBlockedProc--;        //decrement total blocked processes
+        }
+        else if(pStat == Current->activeChildren.procList){ //compare memory locations to verify list type
+            Current->activeChildren.total--;                //decrement total activeChildren processes
+        }
+        else if(pStat == Current->quitChildren.procList){   //compare memory locations to verify list type
+            Current->quitChildren.total--;                  //decrement total quitChildren processes
+        }
+        else if(pStat == Current->zappers.procList){        //compare memory locations to verify list type
+            Current->zappers.total--;                       //decrement total zappers processes
+        }
+        else if(pStat == Current->parent_proc_ptr->quitChildren.procList){
+            Current->parent_proc_ptr->quitChildren.total--;
+        }
+        else if(pStat == Current->parent_proc_ptr->activeChildren.procList){
+            Current->parent_proc_ptr->activeChildren.total--;
+        }
+        else if(pStat == Current->parent_proc_ptr->zappers.procList){
+            Current->parent_proc_ptr->zappers.total--;
         }
 
         return 0;
     }
     else {
         if (pidFlag == 0){
-            console("Error: Unable to locate process pid [%d]\n", pid);
+            console("Error: Unable to locate process pid [%d]. Halting...\n", pid);
             halt(1);
         }
         else if (remFlag == 0) {
-            console("Error: Removal of process [%d] unsuccessful\n", pid);
+            console("Error: Removal of process [%d] unsuccessful. Halting...\n", remFlag);
             halt(1);
         }
     }
@@ -1013,11 +1211,23 @@ bool StatusQueueIsFull(const StatusQueue * pStat){
     else if(pStat == BlockedList){
         return totalBlockedProc >= MAXPROC;
     }
-    else if(pStat == Current->activeChildren.childList){
+    else if(pStat == Current->activeChildren.procList){
         return Current->activeChildren.total >= MAXPROC;
     }
-    else if(pStat == Current->quitChildren.childList){
-    return Current->quitChildren.total >= MAXPROC;
+    else if(pStat == Current->quitChildren.procList){
+        return Current->quitChildren.total >= MAXPROC;
+    }
+    else if(pStat == Current->zappers.procList){
+        return Current->zappers.total >= MAXPROC;
+    }
+    else if(pStat == Current->parent_proc_ptr->quitChildren.procList){
+        return Current->parent_proc_ptr->quitChildren.total >= MAXPROC;
+    }
+    else if(pStat == Current->parent_proc_ptr->activeChildren.procList){
+        return Current->parent_proc_ptr->activeChildren.total >= MAXPROC;
+    }
+    else if(pStat == Current->parent_proc_ptr->zappers.procList){
+        return Current->parent_proc_ptr->zappers.total >= MAXPROC;
     }
 }
 
