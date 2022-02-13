@@ -41,7 +41,7 @@
  */
 
 extern  int     fork1(char *name, int(*func)(char *), char *arg, 
-			    int stacksize, int priority);
+			    int stackSize, int priority);
 extern	int		join(int *status);
 extern	void	quit(int status);
 extern  int		zap(int pid);
