@@ -180,7 +180,12 @@ int fork1(char *name, int (*func)(char *), char *arg, int stackSize, int priorit
 
 
     /*** Update Process Table with new Process ***/
-    newPid = GetNextPid();                          //get next process ID
+    if((newPid = GetNextPid()) == -1){              //get next process ID
+
+        //Error Check: Exceeding Max Processes
+        DebugConsole("Error: Attempting to exceed MAXPROC limit [%d].\n", MAXPROC);
+        return -1;
+    }
     proc_slot = newPid % MAXPROC;                   //assign slot
     ProcTable[proc_slot].pid = newPid;              //assign pid
     ProcTable[proc_slot].priority = priority;       //assign priority
@@ -312,7 +317,7 @@ int join(int *code)
 
     /*** Error Check: Process has no children ***/
     if(Current->activeChildren.total == 0 && Current->quitChildren.total == 0){
-        console("Error: %s has no children", Current->name);
+        DebugConsole("Error: %s has no children", Current->name);
         return (-2);    //return -2: process has no children
     }
 
@@ -362,11 +367,6 @@ int join(int *code)
         dispatcher();
     }
 
-    /*** Error Check: Process was zapped in join ***/
-    if(is_zapped()){
-        return -1;
-    }
-
     /*** Get Return Code from new quitChild ***/
     /* Iterate through quitChildren to find oldest quit child*/
     for (int index = 0; index < LOWEST_PRIORITY; index++) {   //For each index in array
@@ -391,7 +391,10 @@ int join(int *code)
     free(pQuitChild->process->stack);   //free malloc
     memset(&ProcTable[child_proc_slot], 0, sizeof(proc_struct));  //reinitialize ProcTable
 
-
+    /*** Error Check: Process was zapped in join ***/
+    if(is_zapped()){
+        return -1;
+    }
 
     return childPID;
 
@@ -412,6 +415,7 @@ void quit(int code)
     StatusStruct *pActiveChild = NULL;  //used to iterate procList
     StatusStruct *pQuitChild = NULL;    //used to iterate procList
     StatusStruct *pZapper = NULL;       //used to iterate zapList
+    StatusStruct *pNextZap = NULL;         //used to iterate zapList
     proc_ptr pParent;       //used to modify parent information
 
     /*** Error Check: Test if in kernel mode, halt if in user mode ***/
@@ -449,9 +453,11 @@ void quit(int code)
 
     /*** Iterate through procList to check for zappers and unblock ALL ***/
     for (int index = 0; index < LOWEST_PRIORITY; index++) {   //For each index in array
-        pZapper = Current->zappers.procList[index].pHeadProc; //Set to pHead of index
+        pZapper = pNextZap = Current->zappers.procList[index].pHeadProc; //Set to pHead of index
 
         while(pZapper && pZapper->process != NULL){             //verify not end of procList
+            pNextZap = pZapper->pNextProc;
+
             if (pZapper->process->status == STATUS_ZAP_BLOCK){  //status redundancy check
                 pZapper->process->status = STATUS_READY;        //unblock zapper
 
@@ -480,7 +486,7 @@ void quit(int code)
                 //remove from Current zappers list
                 removeProcessLL(pZapper->process->pid, pZapper->process->priority, Current->zappers.procList);
             }
-            pZapper = pZapper->pNextProc; //iterate to next zapper on list
+            pZapper = pNextZap;     //iterate to next zapper on list
         }
     }  // all zapper unblocked
 
@@ -1013,9 +1019,9 @@ int GetNextPid()
     int newPid = -1;
     int procSlot = next_pid % MAXPROC;
 
-    if (numProc < MAXPROC)
+    if (totalProc < MAXPROC)
     {
-        while ((numProc < MAXPROC) && (ProcTable[procSlot].status != STATUS_EMPTY))
+        while ((totalProc < MAXPROC) && (ProcTable[procSlot].status != STATUS_EMPTY))
         {
             next_pid++;
             procSlot = next_pid % MAXPROC;
@@ -1094,7 +1100,7 @@ int VerifyProcess(char *name, int priority, int *func, int stackSize){
         return flag = -1;
     }
     else if(stackSize < USLOSS_MIN_STACK){     // Stacksize is less than USLOSS_MIN_STACK
-        console("Error: stackSize [%d] was less than minimum stack address[%d].\n", stackSize, USLOSS_MIN_STACK);
+        console("Error: stackSize [%d] was less than minimum stack address [%d].\n", stackSize, USLOSS_MIN_STACK);
         return flag = -2;
     }
     //No Errors
@@ -1141,6 +1147,7 @@ void AddProcessLL(int proc_slot, StatusQueue * pStat){
     }
     else{
         pStat[index].pTailProc->pNextProc = pNew;         //add to end of list/index
+        pNew->pPrevProc = pStat[index].pTailProc;         //assign pPrev to current tail
     }
 
     pStat[index].pTailProc = pNew;                        //reassign pTail to new Tail
