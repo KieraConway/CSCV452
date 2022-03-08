@@ -3,4 +3,6 @@
 
 Project List
 
-- [] Programming Project Phase 1: The Kernel | Due 02/14/22
+- [X] Due 02/14/22 | Programming Project Phase 1: The Kernel
+
+- [] Due 03/21/22 | Programming Project Phase 2: Message Passing and Interrupt Handling
