@@ -6,16 +6,16 @@
 #include "handler.h"
 
 /* ------------------------- Constants ----------------------------------- */
-#define DEBUG2 1
+#define DEBUG2          1
 // Added in for slot/process usage status
 #define MBOX_EMPTY      0   //Mailbox Table Index is Empty
 #define MBOX_USED       1   //Mailbox Table Index is Not Empty/ Used
-#define SLOT_EMPTY      2   // Slot is empty and ready to hold a message
-#define SLOT_FULL       3   // Slot is full and holds a message currently
+#define SLOT_EMPTY      2   // Slot is empty and ready to hold a message    //todo remove?
+#define SLOT_FULL       3   // Slot is full and holds a message currently   //todo remove?
 #define WAITING         4   // Process is waiting to send or receive a message
-#define SENDING         5   // Process is sending a message
-#define RECEIVING       6   // Process is receiving a message
-#define SLOT_BLOCKED    7   // Process is blocked
+#define SEND_BLOCK      5   // Process is sending a message
+#define RECEIVE_BLOCK   6   // Process is receiving a message
+#define SLOT_BLOCKED    7   // Process is blocked   //todo remove?
 
 
 /* ------------------------ Typedefs and Structs ------------------------ */
@@ -56,7 +56,9 @@ struct slotQueue {
 typedef struct slot_Table {
     //short           slot_id;              //unique slot id //TODO: REMOVE
     //short           slot_index;           //index (slot_id % MAXSLOTS) TODO: REMOVE
-    unsigned int    message;                // Binary representation of Message
+    //unsigned int    message;              // Binary representation of Message
+    void            *message;               //Binary representation of Message
+    int             messageSize;            //size of message
     int             status;                 //message status
     int             mbox_id;                //mailbox id (for index reference)
 } Slot_Table;
