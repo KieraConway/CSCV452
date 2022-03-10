@@ -9,6 +9,10 @@
     Katelyn Griffith
 
     NOTES:
+        UPDATE clearMboxSlot NAME ***************
+            clearMboxSlot - clears ALL slots
+            RemoveSlotLL -  removes single Slot
+                rename one or both to prevent confusion*******
         Going to need to work on phase2.c and handler.c
         term files work like message queues for phase 2
         need symbollic link for phase 2?
@@ -32,8 +36,8 @@ extern int start2 (char *);
 int check_io();
 
 /* Helper Function for Send and Receive */
-void HelperSend(int mbox_slot, void *msg, int msg_size, int block_flag);
-void HelperReceive(int mbox_slot, void *msg, int msg_size, int block_flag);
+void HelperSend(int mbox_index, void *msg, int msg_size, int block_flag);
+void HelperReceive(int mbox_index, void *msg, int msg_size, int block_flag);
 
 /* Functions Brought in From Phase 1 */
 static void enableInterrupts();
@@ -50,19 +54,26 @@ void SyscallIntHandler(int dev, void *arg);
 
 /*Mailbox Table*/
 int GetNextMailID();
-void InitializeMailbox(int status, int mbox_slot, int mbox_id, int maxSlots, int slotSize);
-int GetMboxIndex(int mbox_slot);
+void InitializeMailbox(int newStatus, int mbox_index, int mbox_id, int maxSlots, int slotSize);
+int GetMboxIndex(int mbox_id);
 
 /* Linked List Functions */
-void InitializeList(slotQueue *pSlot, procQueue *pProc);    //Initialize Linked List
+//General, Multi-use
+void InitializeList(slotQueue *pSlot, procQueue *pProc);            //Initialize Linked List
+bool ListIsFull(const slotQueue *pSlot, const procQueue *pProc);    //Check if Slot List is Full
+bool ListIsEmpty(const slotQueue *pSlot, const procQueue *pProc);   //Check if Slot List is Empty
+
+//Slot Lists
 int AddSlotLL(void *msg_ptr, int msg_size, mailbox * mbox); //Add Slot to Specific Mailbox
 int RemoveSlotLL(slotQueue * pSlotQ);                       //Remove Slot from Specific Mailbox
-bool SlotListIsFull(const slotQueue * pSlot);               //Check if Slot List is Full
-bool SlotListIsEmpty(const slotQueue * pSlot);              //Check if Slot List is Empty
+
+//Process Lists
+void AddProcessLL(int pid, procQueue * pq);         //Add pid to Process Queue
+int RemoveProcessLL(int pid, procQueue * pq);      //Remove pid from Process Queue
 
 /* Mailbox Slots Release Functions */
-void clearMboxSlot(mailbox *mbox);      //clears out values of specified mailbox
-void zapProcs(mailbox *mbox);
+void HelperRelease(mailbox *mbox);          //Clears all slots in mailbox, calls InitializeMailbox
+void UnblockProcs(ProcList *pSaveProc);     //Iterates through process list, unblocks
 
 /* -------------------------- Globals ------------------------------------- */
 
@@ -152,7 +163,7 @@ int start1(char *arg)
 int MboxCreate(int slots, int slot_size)
 {
     int newMid;     //new mailbox id
-    int mbox_slot;  //new mailbox index in Mailbox Table
+    int mbox_index;  //new mailbox index in Mailbox Table
 
     // Check for kernel mode
     check_kernel_mode(__func__);
@@ -175,7 +186,7 @@ int MboxCreate(int slots, int slot_size)
     }
 
     /*Error Check: Check for other invalid parameter values*/
-    if (slots < 0 || slot_size < 0)
+    if (slots < 0 || slot_size < 0) //todo: fix error message
     {
         DebugConsole2("%s : An invalid value of slot size [%d] or message size [%d] was used.\n",
                       __func__, slots, slot_size);
@@ -198,10 +209,10 @@ int MboxCreate(int slots, int slot_size)
         DebugConsole2("Error: Attempting to exceed MAXMBOX limit [%d].\n", MAXMBOX);
         return -1;
     }
-    mbox_slot = newMid % MAXMBOX;                   //assign mbox_slot
+    mbox_index = newMid % MAXMBOX;                   //assign mbox_index
 
     /*Initialize Mailbox*/
-    InitializeMailbox(MBOX_USED, mbox_slot, newMid, slots, slot_size);
+    InitializeMailbox(MBOX_USED, mbox_index, newMid, slots, slot_size);
 
     /*Increment totalSlots*/
     totalSlots += slots;    //note: totalSlots is different than activeSlots
@@ -213,7 +224,7 @@ int MboxCreate(int slots, int slot_size)
     enableInterrupts();
 
     /*Return Unique mailbox ID*/
-    return MailboxTable[mbox_slot].mbox_id;
+    return MailboxTable[mbox_index].mbox_id;
 
 } /* MboxCreate */
 
@@ -240,14 +251,11 @@ int MboxSend(int mbox_id, void *msg_ptr, int msg_size)
     //messages are delivered in the order sent
     //////////////////////////
 
-    // Check for kernel mode
-    check_kernel_mode(__func__);
-
-    // Disable interrupts
-    disableInterrupts();
-
-    //Get Mailbox index in MailboxTable
-    int mbox_slot = GetMboxIndex(mbox_id);
+    /*** Function Initialization ***/
+    check_kernel_mode(__func__);    // Check for kernel mode
+    disableInterrupts();                        // Disable interrupts
+    int mboxIndex = GetMboxIndex(mbox_id);  //Get Mailbox index in MailboxTable
+    mailbox *pMbox = &MailboxTable[mboxIndex];  // Create Mailbox pointer
 
     /*** Error Check: Invalid Parameters ***/
     //check mailbox id
@@ -271,29 +279,31 @@ int MboxSend(int mbox_id, void *msg_ptr, int msg_size)
         return -1;
     }
 
-    //TODO: the error checks need to come after
-    // because they are checking that nothing happened
-    // while blocked ??
+    /*** Verify Slot is Available ***/
+    if(pMbox->activeSlots >= pMbox->maxSlots){                       //if exceeding max slots
+        AddProcessLL(getpid(),&pMbox->waitingToSend);      //add proc to waiting list
+        block_me(SEND_BLOCK);                                       //block sending process
 
-    //Add Message and Slot into Mailbox
-    if((AddSlotLL(msg_ptr, msg_size, &MailboxTable[mbox_slot])) == -1){
-        /*** Block the sending process if no slot available ***/
-        int curPid = getpid();      //Get Current Running Process ID
-        block_me(4);
+    }
 
-        //todo: add to waitlist
+    /*** Add Message and Slot into Mailbox ***/
+    if((AddSlotLL(msg_ptr, msg_size, pMbox)) == -1){
+        DebugConsole2("%s: Invalid Send Unblocking - Mailbox Full. Halting...", __func__);
+        halt(1);
+    }
 
+    /*** Unblock Waiting Processes ***/
+    if(!ListIsEmpty(NULL, &pMbox->waitingToReceive)){  //if list is not empty
+        int pid = RemoveProcessLL(pMbox->waitingToReceive.pHeadProc->pid,
+                                  &pMbox->waitingToReceive);    //remove from list
+        unblock_proc(pid);                                          //unlock process
     }
 
     // Enable interrupts
     enableInterrupts();
 
-    // will block when number of slots is full until one becomes available
-    //use memcpy to copy binary message data
-
     /*** Error Check: Mailbox was Released ***/   //todo release vs empty ?
-
-    if(MailboxTable[mbox_slot].status == MBOX_EMPTY){
+    if(pMbox->status == MBOX_EMPTY){
         DebugConsole2("%s: mailbox was released while process was blocked.",
                       __func__);
         return -3;
@@ -330,18 +340,11 @@ int MboxReceive(int mbox_id, void *msg_ptr, int max_msg_size)
     //NOTE:
     // messages are received in the order the receive function is called.
 
-    /*** Function Setup ***/
-    // Check for kernel mode
-    check_kernel_mode(__func__);
-
-    // Disable interrupts
-    disableInterrupts();
-
-    //Get Mailbox index in MailboxTable
-    int mbox_slot = GetMboxIndex(mbox_id);
-
-    //Create Mailbox pointer
-    mailbox *pMbox = &MailboxTable[mbox_slot];
+    /*** Function Initialization ***/
+    check_kernel_mode(__func__);    // Check for kernel mode
+    disableInterrupts();                        // Disable interrupts
+    int mboxIndex = GetMboxIndex(mbox_id);  //Get Mailbox index in MailboxTable
+    mailbox *pMbox = &MailboxTable[mboxIndex];  // Create Mailbox pointer
 
     /*** Error Check: Invalid Parameters ***/
     //check if mailbox id is invalid
@@ -370,6 +373,17 @@ int MboxReceive(int mbox_id, void *msg_ptr, int max_msg_size)
         return -1;
     }
 
+    /*** Verify Message is Available ***/
+    if(pMbox->activeSlots <= 0){                                    //if no message available
+        AddProcessLL(getpid(),&pMbox->waitingToReceive);   //add proc to waiting list
+        block_me(RECEIVE_BLOCK);                                    //block receiving process
+
+        if(pMbox->slotQueue.pHeadSlot == NULL){     //Verify Unblocked when Message Available
+            DebugConsole2("%s: Invalid Receive Unblocking - Mailbox Empty. Halting...", __func__);
+            halt(1);
+        }
+    }
+
     /*** Error Check: Sent Message Size Exceeds Limit ***/
     int sentMsgSize = pMbox->slotQueue.pHeadSlot->slot->messageSize;
     if(sentMsgSize > max_msg_size){
@@ -382,12 +396,18 @@ int MboxReceive(int mbox_id, void *msg_ptr, int max_msg_size)
     //copy message into buffer
     memcpy(msg_ptr, pMbox->slotQueue.pHeadSlot->slot->message, sentMsgSize);
 
-    /*** Verify Message is Available ***/
-    //remove slot from message queue
-    if((RemoveSlotLL(&pMbox->slotQueue)) == -1){    //if no message available
-        block_me(RECEIVE_BLOCK);                           //block receiving process
-        //todo
-        // will block calling process until a message is Received
+    /*** Remove Slot/Message from Queue ***/
+    if((RemoveSlotLL(&pMbox->slotQueue)) == -1){
+        DebugConsole2("%s: Unable to receive message - mailbox empty. Halting...",
+                      __func__);
+        halt(1);
+    }
+
+    /*** Unblock Waiting Processes ***/
+    if(!ListIsEmpty(NULL, &pMbox->waitingToSend)){  //if list is not empty
+        int pid = RemoveProcessLL(pMbox->waitingToSend.pHeadProc->pid,
+                                  &pMbox->waitingToSend);    //remove from list
+        unblock_proc(pid);                                       //unlock process
     }
 
     /*** Error Check: Process was Zapped ***/
@@ -424,14 +444,12 @@ int MboxReceive(int mbox_id, void *msg_ptr, int max_msg_size)
    ----------------------------------------------------------------------- */
 int MboxRelease(int mbox_id)
 {
-    // Check for kernel mode
-    check_kernel_mode(__func__);
+    /*** Function Initialization ***/
+    check_kernel_mode(__func__);    // Check for kernel mode
+    disableInterrupts();                        // Disable interrupts
+    int mboxIndex = GetMboxIndex(mbox_id);  //Get Mailbox index in MailboxTable
+    mailbox *pMbox = &MailboxTable[mboxIndex];  // Create Mailbox pointer
 
-    // Disable interrupts
-    disableInterrupts();
-
-    //Get Mailbox index in MailboxTable
-    int mbox_slot = GetMboxIndex(mbox_id);
 
     /*** Error Check: Invalid Parameters ***/
     //check if mailbox id is invalid
@@ -440,21 +458,21 @@ int MboxRelease(int mbox_id)
                       __func__, mbox_id);
         return -1;
     }
-    else if(MailboxTable[mbox_slot].mbox_id != mbox_id){
+    else if(pMbox->mbox_id != mbox_id){
         DebugConsole2("%s : Process ID [%d] can not be found.\n",
                       __func__, mbox_id);
         return -1;
     }
 
     /*** Error Check: Unused Mailbox ***/
-    if(MailboxTable[mbox_slot].status == MBOX_EMPTY){
+    if(pMbox->status == MBOX_EMPTY){
         DebugConsole2("%s: Attempting to release an already empty slot.",
                       __func__);
         return -1;
     }
 
     /*** Clear out Mailbox Slot ***/
-    clearMboxSlot(&MailboxTable[mbox_slot]);
+    HelperRelease(pMbox);
 
     /*** Error Check: Process was Zapped ***/
     if(is_zapped()){
@@ -487,14 +505,11 @@ int MboxRelease(int mbox_id)
    ----------------------------------------------------------------------- */
 int MboxCondSend(int mailboxID, void *message, int message_size)
 {
-    // Check for kernel mode
-    check_kernel_mode(__func__);
-
-    // Disable interrupts
-    disableInterrupts();
-
-    //Get Mailbox index in MailboxTable
-    int mbox_slot = GetMboxIndex(mailboxID);
+    /*** Function Initialization ***/
+    check_kernel_mode(__func__);    // Check for kernel mode
+    disableInterrupts();                        // Disable interrupts
+    int mboxIndex = GetMboxIndex(mailboxID);  //Get Mailbox index in MailboxTable
+    mailbox *pMbox = &MailboxTable[mboxIndex];  // Create Mailbox pointer
 
     /*** Error Check: Invalid Parameters ***/
     //check mailbox id
@@ -567,8 +582,11 @@ int MboxCondReceive(int mailboxID, void *message, int max_msg_size)
     >= 0:  the size of the message received.
     */
 
-    // Check for kernel mode
-    check_kernel_mode(__func__);
+    /*** Function Initialization ***/
+    check_kernel_mode(__func__);    // Check for kernel mode
+    disableInterrupts();                        // Disable interrupts
+    int mboxIndex = GetMboxIndex(mailboxID);  //Get Mailbox index in MailboxTable
+    mailbox *pMbox = &MailboxTable[mboxIndex];  // Create Mailbox pointer
 
 } /* MboxCondReceive */
 
@@ -599,8 +617,8 @@ int check_io()
    ----------------------------------------------------------------------- */
 int waitdevice(int type, int unit, int *status)
 {
-    // Check for kernel mode
-    check_kernel_mode(__func__);
+    /*** Function Initialization ***/
+    check_kernel_mode(__func__);    // Check for kernel mode
 
 }  /* waitdevice */
 
@@ -608,14 +626,14 @@ int waitdevice(int type, int unit, int *status)
  * TODO
    Name -           HelperSend
    Purpose -
-   Parameters -     mbox_slot:      MailboxTable Index
+   Parameters -     mbox_index:      MailboxTable Index
                     *msg:           Pointer to the Message
                     msg_size:       Size of Message in Bytes
                     block_flag:     (1) Blocked, (0) Unblocked
    Returns -        none
    Side Effects -   none
    ----------------------------------------------------------------------- */
-void HelperSend(int mbox_slot, void *msg, int msg_size, int block_flag)
+void HelperSend(int mbox_index, void *msg, int msg_size, int block_flag)
 {
     // fill me
 
@@ -630,14 +648,14 @@ void HelperSend(int mbox_slot, void *msg, int msg_size, int block_flag)
  * TODO
    Name -           HelperReceive
    Purpose -
-   Parameters -     mbox_slot:      MailboxTable Index
+   Parameters -     mbox_index:      MailboxTable Index
                     *msg:           Pointer to the Message
                     msg_size:       Size of Message in Bytes
                     block_flag:     (1) Blocked, (0) Unblocked
    Returns -        none
    Side Effects -   none
    ----------------------------------------------------------------------- */
-void HelperReceive(int mbox_slot, void *msg, int msg_size, int block_flag)
+void HelperReceive(int mbox_index, void *msg, int msg_size, int block_flag)
 {
     // fill me
     return;
@@ -737,13 +755,13 @@ void DebugConsole2(char *format, ...)
  * TODO: delete? check if used
  *
     Name -          CopyToList
-    Purpose -       Copies process at MailBoxTable[mbox_slot] to pStat
-    Parameters -    mbox_slot: location of mailbox in MailBoxTable
+    Purpose -       Copies process at MailBoxTable[mbox_index] to pStat
+    Parameters -    mbox_index: location of mailbox in MailBoxTable
                     pSlot: Address of mailbox slot
     Returns -       none
     Side Effects -  none
    ----------------------------------------------------------------------- */
-static void CopyToList(int mbox_slot, SlotList * pSlot)
+static void CopyToList(int mbox_index, SlotList * pSlot)
 {
     //pStat->process = &ProcTable[proc_slot];
     return;
@@ -846,33 +864,33 @@ int GetNextMailID() {
 /* ------------------------------------------------------------------------
    Name -           InitializeMailbox
    Purpose -        Initializes the new mailbox
-   Parameters -     mbox_slot:  Location inside MailBoxTable
+   Parameters -     mbox_index:  Location inside MailBoxTable
                     mbox_id:    Unique Mailbox ID
                     maxSlots:   Maximum number of slots
                     slotSize:   Maximum size of slot/ message
    Returns -        none
    Side Effects -   Mailbox added to MailboxTable
    ----------------------------------------------------------------------- */
-void InitializeMailbox(int status, int mbox_slot, int mbox_id, int maxSlots, int slotSize) {
+void InitializeMailbox(int newStatus, int mbox_index, int mbox_id, int maxSlots, int slotSize) {
 
     //if removing a mailbox from MailboxTable
-    if(status == MBOX_EMPTY) {
+    if(newStatus == MBOX_EMPTY) {
         mbox_id = -1;
         maxSlots = -1;
         slotSize = -1;
     }
 
 
-    MailboxTable[mbox_slot].mbox_slot = mbox_slot;                  //Mailbox Slot
-    MailboxTable[mbox_slot].mbox_id = mbox_id;                      //Mailbox ID
-    MailboxTable[mbox_slot].status = status;                        //Mailbox Status
-    InitializeList(NULL, &MailboxTable[mbox_slot].waitingProcs);    //Waiting Process List
-    InitializeList(NULL, &MailboxTable[mbox_slot].waitingToSend);   //Waiting to Send List
-    InitializeList(NULL, &MailboxTable[mbox_slot].waitingToReceive);//Waiting to Receive List
-    MailboxTable[mbox_slot].maxSlots = maxSlots;                    //Max Slots
-    MailboxTable[mbox_slot].activeSlots = 0;                        //Active Slots
-    MailboxTable[mbox_slot].slotSize = slotSize;                    //Slot Size
-    InitializeList(&MailboxTable[mbox_slot].slotQueue, NULL);       //Slot List
+    MailboxTable[mbox_index].mbox_index = mbox_index;                  //Mailbox Slot
+    MailboxTable[mbox_index].mbox_id = mbox_id;                      //Mailbox ID
+    MailboxTable[mbox_index].status = newStatus;                        //Mailbox Status
+    InitializeList(NULL, &MailboxTable[mbox_index].waitingProcs);    //Waiting Process List
+    InitializeList(NULL, &MailboxTable[mbox_index].waitingToSend);   //Waiting to Send List
+    InitializeList(NULL, &MailboxTable[mbox_index].waitingToReceive);//Waiting to Receive List
+    MailboxTable[mbox_index].maxSlots = maxSlots;                    //Max Slots
+    MailboxTable[mbox_index].activeSlots = 0;                        //Active Slots
+    MailboxTable[mbox_index].slotSize = slotSize;                    //Slot Size
+    InitializeList(&MailboxTable[mbox_index].slotQueue, NULL);       //Slot List
 }
 /* ------------------------------------------------------------------------
    Name -           GetMboxIndex
@@ -893,7 +911,7 @@ int GetMboxIndex(int mbox_id){
 /* ------------------------------------------------------------------------
     Name -          InitializeList
     Purpose -       Initialize List pointed to by parameter
-    Parameters -    Meant to be used as either or, use NULL for other
+    Parameters -    Meant to be used as 'either or', use NULL for other
                     *pSlot: Pointer to Message Slot List
                     *pProc: Pointer to Process List
     Returns -       None, halt(1) on error
@@ -901,18 +919,85 @@ int GetMboxIndex(int mbox_id){
    ----------------------------------------------------------------------- */
 void InitializeList(slotQueue *pSlot, procQueue *pProc)
 {
+    /*** Initialize Slot Queue ***/
     if(pProc == NULL) {
-        // Initialize the head, tail, and count of the passed in list
+        /* Initialize the head, tail, and count slot queue */
         pSlot->pHeadSlot = NULL;
         pSlot->pTailSlot = NULL;
         pSlot->total = 0;
         return;
     }
+
+    /*** Initialize Proc Queue ***/
     else if(pSlot == NULL){
+        /* Initialize the head, tail, and count proc queue */
         pProc->pHeadProc = NULL;
         pProc->pTailProc = NULL;
         pProc->total = 0;
     }
+
+    /*** Error Check: Invalid Parameters ***/
+    else{
+        DebugConsole2("%s: Invalid Parameters Passed", __func__);
+        halt(1);
+    }
+}
+
+/* ------------------------------------------------------------------------
+    Name -          ListIsFull
+    Purpose -       Checks if Slot List OR Proc List is Full
+    Parameters -    Meant to be used as 'either or', use NULL for other
+                    *pSlot: Pointer to Message Slot List
+                    *pProc: Pointer to Process List
+    Returns -        0: not full
+                     1: full
+                    -1: list not found
+    Side Effects -  none
+   ----------------------------------------------------------------------- */
+bool ListIsFull(const slotQueue *pSlot, const procQueue *pProc){
+
+    /*** Search if Slot Queue is Full ***/
+    if(pProc == NULL) {
+        return pSlot->total >= MAXSLOTS;
+    }
+
+    /*** Search if Proc Queue is Full ***/
+    else if(pSlot == NULL){
+        return pProc->total >= MAXPROC;
+    }
+
+    /*** Error Check: Invalid Parameters ***/
+    else{
+        DebugConsole2("%s: Invalid Parameters Passed", __func__);
+        halt(1);
+    }
+}
+
+
+/* ------------------------------------------------------------------------
+    Name -          ListIsEmpty
+    Purpose -       Checks if Slot List OR Proc List is Empty
+    Parameters -    Meant to be used as 'either or', use NULL for other
+                    *pSlot: Pointer to Message Slot List
+                    *pProc: Pointer to Process List
+    Returns -        0: not Empty
+                     1: Empty
+                    -1: list not found
+    Side Effects -  none
+   ----------------------------------------------------------------------- */
+bool ListIsEmpty(const slotQueue *pSlot, const procQueue *pProc){
+
+    /*** Search if Slot Queue is Empty ***/
+    if(pProc == NULL) {
+        return pSlot->pHeadSlot == NULL;    //checks if pHead is empty
+    }
+
+    /*** Search if Proc Queue is Empty ***/
+    else if(pSlot == NULL){
+        return pProc->pHeadProc == NULL;    //checks if pHead is empty
+    }
+
+    /*** Error Check: Invalid Parameters ***/
     else{
         DebugConsole2("%s: Invalid Parameters Passed", __func__);
         halt(1);
@@ -937,7 +1022,7 @@ int AddSlotLL(void *msg_ptr, int msg_size, mailbox * mbox){
 
     /*** Error Check: Verify Slot Space Available***/
     // check if slot queue is full
-    if(SlotListIsFull(&mbox->slotQueue)){
+    if(ListIsFull(&mbox->slotQueue, NULL)){
         DebugConsole2("%s: Slot Queue is full.\n", __func__);
         return -1;
     }
@@ -960,7 +1045,7 @@ int AddSlotLL(void *msg_ptr, int msg_size, mailbox * mbox){
     }
 
     /*** Combine Message, Node, and List ***/
-    memcpy(&pSlot->message,&msg_ptr, msg_size );   //copy message to pSlot
+    memcpy(&pSlot->message,msg_ptr, msg_size );   //copy message to pSlot
     pSlot->messageSize = msg_size;  //update message size
     pSlot->status = SLOT_FULL;      //update pSlot status
     pSlot->mbox_id = mbox->mbox_id; //update pSlot Mailbox ID
@@ -969,8 +1054,8 @@ int AddSlotLL(void *msg_ptr, int msg_size, mailbox * mbox){
     /*** Add pList to Queue and Update Links ***/
     pList->pNextSlot = NULL;                            //Add pList to slotQueue
 
-    if(SlotListIsEmpty(&mbox->slotQueue)){        //if index is empty...
-        mbox->slotQueue.pHeadSlot = pList;               //add to front of list
+    if(ListIsEmpty(&mbox->slotQueue, NULL)){    //if index is empty...
+        mbox->slotQueue.pHeadSlot = pList;                  //add to front of list
     }
     else{
         mbox->slotQueue.pTailSlot->pNextSlot = pList;    //add to end of list'
@@ -982,6 +1067,7 @@ int AddSlotLL(void *msg_ptr, int msg_size, mailbox * mbox){
     /*** Update Counters***/
     totalSlots++;               //global: total slots
     totalActiveSlots++;         //global: total active slots
+    mbox->activeSlots++;        //mailbox active slots
     mbox->slotQueue.total++;    //mailbox total
     mbox->slotQueue.mbox_id = mbox->mbox_id;    //update slotQueue Mailbox ID
 
@@ -998,8 +1084,8 @@ int AddSlotLL(void *msg_ptr, int msg_size, mailbox * mbox){
 int RemoveSlotLL(slotQueue * pSlotQ){
     SlotList * pSave;                       //New node to save position
     pSave = pSlotQ->pHeadSlot;              //Save slot pointer to list head
-    int mbox_slot = GetMboxIndex(pSlotQ->mbox_id);  //Get Mailbox index in MailboxTable
-    mailbox *pMbox = &MailboxTable[mbox_slot];              //Create Mailbox pointer
+    int mbox_index = GetMboxIndex(pSlotQ->mbox_id);  //Get Mailbox index in MailboxTable
+    mailbox *pMbox = &MailboxTable[mbox_index];              //Create Mailbox pointer
 
     /*** Error Check: Verify Messages in List ***/
     if(pSave == NULL){  //Check that pSave returned process
@@ -1031,41 +1117,150 @@ int RemoveSlotLL(slotQueue * pSlotQ){
     return 0;
 }
 
-
 /* ------------------------------------------------------------------------
-    Name -          SlotListIsFull
-    Purpose -       Checks if Slot List is Full
-    Parameters -    pSlot: Mailbox Slot List Structure
-    Returns -        0: not full
-                     1: full
-                    -1: list not found
-    Side Effects -  none
+    Name -          AddProcessLL
+    Purpose -       Add Process to Specified Process Queue
+    Parameters -    pid:    Process ID
+                    pq:     Pointer to Process Queue
+    Returns -       None, halt (1) on error
+    Side Effects -  None
    ----------------------------------------------------------------------- */
-bool SlotListIsFull(const slotQueue * pSlot){
+void AddProcessLL(int pid, procQueue * pq){
 
-    /*** Find Mailbox Index ***/
-    int index = GetMboxIndex(pSlot->mbox_id);
+    /*** Initialize Variable(s) ***/
+    ProcList * pNew;    //New Node
 
-    /*** Check if Mailbox is Full ***/
-    if (MailboxTable[index].maxSlots >= MAXSLOTS)
-        return true;    //is full
-    else
-        return false;   //is not full
+    /*** Error Check: List is Full ***/
+    if(ListIsFull(NULL, pq)){
+        DebugConsole2("%s: Queue is full.\n", __func__);
+        halt(1);
+    }
+
+    /*** Allocate Space for New Node ***/
+    pNew = (ProcList *) malloc (sizeof (ProcList));
+
+    /* Verify Allocation Success */
+    if(pNew == NULL){
+        DebugConsole2("%s: Failed to allocate memory for node in linked list. Halting...\n", __func__);
+        halt(1);    //memory allocation failed
+    }
+
+    /*** Add New Node to List ***/
+    pNew->pid = pid;                            //update pid value
+    pNew->pNextProc = NULL;                     //assign pNext to NULL
+
+    if(ListIsEmpty(NULL, pq)){      //if list is empty...
+        pq->pHeadProc = pNew;                   //add pNew to front of list
+    }
+    else{                                       //if list not empty...
+        pq->pTailProc->pNextProc = pNew;        //add pNew to end of list
+        pNew->pPrevProc = pq->pTailProc;        //assign pNew prev to current tail
+    }
+
+    pq->pTailProc = pNew;                       //reassign pTail to new node
+    pq->total++;                                //update process queue counter
+
+    /*** List Addition Success ***/
+    return;
 }
 
-
 /* ------------------------------------------------------------------------
-    Name -          SlotListIsEmpty
-    Purpose -       Checks if Slot List is Empty
-    Parameters -    pSlot: Mailbox Slot List Structure
-    Returns -        0: not Empty
-                     1: Empty
-                    -1: list not found
-    Side Effects -  none
+    Name -          RemoveProcessLL
+    Purpose -       Removes Process from Specified Process Queue
+    Parameters -    pid:    Process ID
+                    pq:     Pointer to Process Queue
+    Returns -       Pid of removed Process, halt (1) on error
+    Side Effects -  None
    ----------------------------------------------------------------------- */
-bool SlotListIsEmpty(const slotQueue * pSlot){
-    return pSlot->pHeadSlot == NULL;    //checks if pHead is empty
+int RemoveProcessLL(int pid, procQueue * pq){
+
+    /*** Initialize Variable(s) ***/
+    ProcList * pSave;   //Pointer for Linked List
+    int pidFlag = 0;    //verify pid found in list
+    int remFlag = 0;    //verify process removed successfully
+
+    /*** Error Check: List is Empty ***/
+    if(ListIsEmpty(NULL, pq)){
+        DebugConsole2("%s: Queue is empty.\n", __func__);
+        halt(1);
+    }
+
+    /*** Find PID in List ***/
+    pSave = pq->pHeadProc;          //Set pSave to head of list
+
+    while(pSave->pid != 0) {        //verify not end of list    //todo: does 0 work? x>0?
+        if(pSave->pid == pid){      //if found pid to remove...
+            pidFlag = 1;            //Trigger Flag - PID found
+
+            /** If pid to be removed is at head **/
+            if(pSave == pq->pHeadProc){
+                pq->pHeadProc = pSave->pNextProc;           //Set next pid as head
+                pSave->pNextProc = NULL;                    //Set old head next pointer to NULL
+
+                /* if proc is NOT only node on list */
+                if(pq->pHeadProc != NULL) {
+                    pq->pHeadProc->pPrevProc = NULL;        //Set new head prev pointer to NULL
+                }
+
+                /* if proc IS only node on list */
+                else{
+                    pSave->pPrevProc = NULL;    //Set old prev pointer to NULL
+                    pq->pTailProc = NULL;       //Set new tail to NULL
+
+                }
+
+                remFlag = 1;                    //Trigger Flag - Process Removed
+                break;
+            }
+
+            /** If pid to be removed is at tail **/
+            else if(pSave == pq->pTailProc){
+                pq->pTailProc = pSave->pPrevProc;       //Set prev pid as tail
+                pSave->pPrevProc = NULL;                //Set old tail prev pointer to NULL
+                pq->pTailProc->pNextProc = NULL;        //Set new tail next pointer to NULL
+                remFlag = 1;                            //Trigger Flag - Process Removed
+                break;
+            }
+
+            /** If pid to be removed is in middle **/
+            else{
+                pSave->pPrevProc->pNextProc = pSave->pNextProc; //Set pSave prev next to pSave next
+                pSave->pNextProc->pPrevProc = pSave->pPrevProc; //Set pSave next prev to pSave prev
+                pSave->pNextProc = NULL;    //Set old pNext to NULL
+                pSave->pPrevProc = NULL;    //Set old pPrev to NULL
+                remFlag = 1;                //Trigger Flag - Process Removed
+                break;
+            }
+        }
+        else{                           //if pid not found
+            pSave = pSave->pNextProc;   //increment to next in list
+        }
+    }//end while
+
+    /*** Decrement Counter ***/
+    pq->total--;
+
+    /*** Error Check: Pid Found and Removed ***/
+    if(pidFlag && remFlag){
+        pSave = NULL;       //free() causing issues in USLOSS
+
+    }
+    else {
+        if (pidFlag == 0){
+            DebugConsole2("%s: Unable to locate pid [%d]. Halting...\n",
+                          __func__, pid);
+            halt(1);
+        }
+        else if (remFlag == 0) {
+            DebugConsole2("%s: Removal of pid [%d] unsuccessful. Halting...\n",
+                          __func__, remFlag);
+            halt(1);
+        }
+    }
+
+    return pid;
 }
+
 /* * * * * * * * * * * * END OF Linked List Functions * * * * * * * * * * * */
 
 
@@ -1079,44 +1274,44 @@ bool SlotListIsEmpty(const slotQueue * pSlot){
     Returns -       none
     Side Effects -  none
    ----------------------------------------------------------------------- */
-void clearMboxSlot(mailbox *mbox) {
+void HelperRelease(mailbox *mbox) {
 
-    //todo ideas: rename helper release?
-
-    int mboxIndex = GetMboxIndex(mbox);
-
+    ProcList * pSaveProc;
     /*** Update Global Counters ***/
     totalSlots -= mbox->maxSlots;           //decrement total
     totalActiveSlots -= mbox->activeSlots;  //decrement active
     totalMailbox--;                         //decrement mailbox
 
     /*** Handle Mailbox Processes ***/
-    //todo, need to handle processes inside mailbox;
+    /* Check Waiting Processes */
+    mbox->waitingProcs.pHeadProc != NULL ? UnblockProcs(mbox->waitingProcs.pHeadProc): NULL;
 
-    /*** Handle Mailbox Slots ***/
-    //todo, need to handle messages inside of slots
+    /* Check Waiting to Send Processes */
+    mbox->waitingToSend.pHeadProc != NULL ? UnblockProcs(mbox->waitingToSend.pHeadProc) : NULL;
 
-    /*** Clear Slot Values ***/
-    InitializeMailbox(MBOX_EMPTY, mbox, NULL, NULL, NULL);
+    /* Check Waiting to Receive Processes */
+    mbox->waitingToReceive.pHeadProc != NULL ? UnblockProcs( mbox->waitingToReceive.pHeadProc) : NULL;
+
+    /*** Clear Mailbox Values ***/
+    InitializeMailbox(MBOX_EMPTY, mbox->mbox_index, NULL, NULL, NULL);
 
 }
 
 /* ------------------------------------------------------------------------
- * TODO
- *
-    Name -          zapProcs
+    Name -          UnblockProcs
     Purpose -       Handles blocked processes on a released mailbox
-    Parameters -    mbox: Pointer to Mailbox
+    Parameters -    pSaveProc: Pointer to Save
     Returns -       none
     Side Effects -  none
    ----------------------------------------------------------------------- */
-void zapProcs(mailbox *mbox)
+void UnblockProcs(ProcList *pSaveProc)
 {
-    /* TODO:
-     * We need to zap processes that have a lower priority then current
-     * in Phase2 pg 3
-    */
-    return;//while (slot)
+    /* Unblock Found Processes */
+    while(pSaveProc != NULL){           //while not end of list
+        int pid = pSaveProc->pid;       //save pid
+        unblock_proc(pid);              //unblock pid
+        pSaveProc = pSaveProc->pNextProc;   //increment pid
+    }
 }
 
 /* * * * * * * * * * END OF Mailbox Slots Release Functions * * * * * * * * * */
