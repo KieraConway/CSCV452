@@ -29,21 +29,22 @@ typedef struct mbox_proc *mbox_proc_ptr;
 /* Linked List for PID */
 typedef struct  procList{
     int pid;                        //process PID
-    struct ProcList *pNextProc;     //points to next process
-    struct ProcList *pPrevProc;     //points to previous process
+    struct procList *pNextProc;     //points to next process
+    struct procList *pPrevProc;     //points to previous process
 } ProcList;
 
-struct procQueue {
+typedef struct procQueue {
     ProcList *pHeadProc;            //points to msg list head
     ProcList *pTailProc;            //points to msg list tail
     int total;                      //counts total messages
-};
+    int mbox_id;                    //mailbox id (for index reference) todo: remove?
+} ProcQueue;
 
 /* Structures for Mailbox Slot Lists */
 typedef struct  slotList{
     slot_ptr slot;
-    struct  SlotList *pNextSlot;    //points to next process
-    struct  SlotList *pPrevSlot;    //points to previous process
+    struct  slotList *pNextSlot;    //points to next process
+    struct  slotList *pPrevSlot;    //points to previous process
 } SlotList;
 
 struct slotQueue {
@@ -57,7 +58,8 @@ typedef struct slot_Table {
     //short           slot_id;              //unique slot id //TODO: REMOVE
     //short           slot_index;           //index (slot_id % MAXSLOTS) TODO: REMOVE
     //unsigned int    message;              // Binary representation of Message
-    void            *message;               //Binary representation of Message
+    //void            *message;             //Binary representation of Message
+    char            message[MAXMESSAGE];    //Binary representation of Message
     int             messageSize;            //size of message
     int             status;                 //message status
     int             mbox_id;                //mailbox id (for index reference)
@@ -65,7 +67,7 @@ typedef struct slot_Table {
 //end of Slot structures
 
 struct mailbox {
-    int         mbox_slot;          // Location inside MailboxTable
+    int         mbox_index;          // Location inside MailboxTable
     int         mbox_id;            // Unique Mailbox ID
     int         status;
     procQueue   waitingProcs;       // Linked list of waiting processes to be used to send and receive
