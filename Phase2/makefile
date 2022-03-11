@@ -35,7 +35,7 @@ cleanAll:
 	rm -f test??.c
 	make clean
 
-phase2.o:	message.h handler.h
+phase2.o:	message.h handler.h phase2.c
 	$(CC) $(CFLAGS) -c phase2.c
 
 #Needed for CLion IDE can be ignored
