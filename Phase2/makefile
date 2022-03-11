@@ -31,6 +31,10 @@ $(TESTS):	$(TARGET) p1.o
 clean:
 	rm -f $(COBJS) $(TARGET) core term*.out test*.o $(TESTS) p1.o
 
+cleanAll:
+	rm -f test??.c
+	make clean
+
 phase2.o:	message.h handler.h
 	$(CC) $(CFLAGS) -c phase2.c
 
