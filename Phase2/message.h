@@ -8,14 +8,16 @@
 /* ------------------------- Constants ----------------------------------- */
 #define DEBUG2          1
 // Added in for slot/process usage status
-#define MBOX_EMPTY      0   //Mailbox Table Index is Empty
-#define MBOX_USED       1   //Mailbox Table Index is Not Empty/ Used
-#define SLOT_EMPTY      2   // Slot is empty and ready to hold a message    //todo remove?
-#define SLOT_FULL       3   // Slot is full and holds a message currently   //todo remove?
-#define WAITING         4   // Process is waiting to send or receive a message
-#define SEND_BLOCK      5   // Process is sending a message
-#define RECEIVE_BLOCK   6   // Process is receiving a message
-#define SLOT_BLOCKED    7   // Process is blocked   //todo remove?
+#define MBOX_EMPTY      0   // Mailbox Table Index is Empty
+#define MBOX_RELEASED   1   // Mailbox Table Index is Released
+#define MBOX_USED       2   // Mailbox Table Index is Not Empty/ Used
+#define SLOT_EMPTY      3   // Slot is empty and ready to hold a message    //todo remove?
+#define SLOT_FULL       4   // Slot is full and holds a message currently   //todo remove?
+#define WAITING         5   // Process is waiting to send or receive a message
+#define SEND_BLOCK      6   // Process is sending a message
+#define RECEIVE_BLOCK   7   // Process is receiving a message
+#define RELEASE_BLOCK   8   // Process is releasing a mailbox
+#define SLOT_BLOCKED    9   // Process is blocked   //todo remove?
 
 
 /* ------------------------ Typedefs and Structs ------------------------ */
@@ -62,14 +64,15 @@ typedef struct slot_Table {
     char            message[MAXMESSAGE];    //Binary representation of Message
     int             messageSize;            //size of message
     int             status;                 //message status
-    int             mbox_id;                //mailbox id (for index reference)
+    int             mbox_id;                //mailbox id for (for index reference)
 } Slot_Table;
 //end of Slot structures
 
 struct mailbox {
-    int         mbox_index;          // Location inside MailboxTable
+    int         mbox_index;         // Location inside MailboxTable
     int         mbox_id;            // Unique Mailbox ID
     int         status;
+    int         releaser;           // If mailbox is released, holds the releaser PID
     procQueue   waitingProcs;       // Linked list of waiting processes to be used to send and receive
     procQueue   waitingToSend;      // Linked list of processes waiting to send a message
     procQueue   waitingToReceive;   // Linked list of processes to receive a message
