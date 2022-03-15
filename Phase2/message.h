@@ -31,29 +31,6 @@ typedef struct proc_table * proc_ptr;   //todo: delete if unused
 typedef struct slot_table * slot_ptr;
 
 
-/* Structures for Processes */
-typedef struct  procList{
-    int pid;                        //process PID
-    struct procList *pNextProc;     //points to next process
-    struct procList *pPrevProc;     //points to previous process
-} ProcList;
-
-typedef struct procQueue {
-    ProcList *pHeadProc;            //points to msg list head
-    ProcList *pTailProc;            //points to msg list tail
-    int total;                      //counts total messages
-    int mbox_id;                    //mailbox id (for index reference) todo: remove?
-} ProcQueue;
-
-
-//struct proc_table {
-//    int     index;      //index (pid % MAXSLOTS)
-//    int     pid;        //process pid
-//    void    *message;   //Binary representation of Message
-//    int     status;     //message status
-//};
-//end of Process structures
-
 /* Structures for Mailbox Slot Lists */
 typedef struct  slotList{
     slot_ptr slot;
@@ -71,12 +48,36 @@ typedef struct slotQueue{
 struct slot_table {
     int             slot_index;             //index (slot_id % MAXSLOTS)
     int             slot_id;                //unique slot id
-    char            message[MAXMESSAGE];
+    char            message[MAXMESSAGE];    //contains message
     int             messageSize;            //size of message
     int             status;                 //message status
+    bool            delivered;              //indicates if message delivered
     int             mbox_id;                //mailbox id for (for index reference)
 };
 //end of Slot structures
+
+/* Structures for Processes */
+typedef struct  procList{
+    int pid;                        //process pid
+    SlotList *pSlot;                //pointer to slot
+    struct procList *pNextProc;     //points to next process
+    struct procList *pPrevProc;     //points to previous process
+} ProcList;
+
+typedef struct procQueue {
+    ProcList *pHeadProc;            //points to msg list head
+    ProcList *pTailProc;            //points to msg list tail
+    int total;                      //counts total messages
+    int mbox_id;                    //mailbox id (for index reference) todo: remove?
+} ProcQueue;
+
+//struct proc_table {
+//    int     index;      //index (pid % MAXSLOTS)
+//    int     pid;        //process pid
+//    void    *message;   //Binary representation of Message
+//    int     status;     //message status
+//};
+//end of Process structures
 
 struct mailbox {
     int         mbox_index;         // Location inside MailboxTable
