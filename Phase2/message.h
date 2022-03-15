@@ -7,28 +7,31 @@
 
 /* ------------------------- Constants ----------------------------------- */
 #define DEBUG2          1
-// Added in for slot/process usage status
-#define MBOX_EMPTY      0   // Mailbox Table Index is Empty
+/* Status Constants */
+#define EMPTY           0   // Empty index in Mailbox Table/ Slot Table
 #define MBOX_RELEASED   1   // Mailbox Table Index is Released
 #define MBOX_USED       2   // Mailbox Table Index is Not Empty/ Used
-#define SLOT_EMPTY      3   // Slot is empty and ready to hold a message    //todo remove?
-#define SLOT_FULL       4   // Slot is full and holds a message currently   //todo remove?
-#define WAITING         5   // Process is waiting to send or receive a message
-#define SEND_BLOCK      6   // Process is sending a message
-#define RECEIVE_BLOCK   7   // Process is receiving a message
-#define RELEASE_BLOCK   8   // Process is releasing a mailbox
-#define SLOT_BLOCKED    9   // Process is blocked   //todo remove?
+#define SLOT_FULL       3   // Slot is full and holds a message currently
+#define WAITING         4   // Process is waiting to send or receive a message
+#define SEND_BLOCK      5   // Process is sending a message
+#define RECEIVE_BLOCK   6   // Process is receiving a message
+#define RELEASE_BLOCK   7   // Process is releasing a mailbox
+//#define SLOT_BLOCKED    8   // Process is blocked   //todo remove?
 
 
 /* ------------------------ Typedefs and Structs ------------------------ */
 typedef struct procQueue procQueue;
 typedef struct slotQueue slotQueue;
-typedef struct slot_Table * slot_ptr;
-typedef struct msg_table * msg_ptr;
-typedef struct mailbox mailbox;
-typedef struct mbox_proc *mbox_proc_ptr;
 
-/* Linked List for PID */
+typedef struct proc_table proc_table;
+typedef struct slot_table slot_table;
+typedef struct mailbox mailbox;
+
+typedef struct proc_table * proc_ptr;   //todo: delete if unused
+typedef struct slot_table * slot_ptr;
+
+
+/* Structures for Processes */
 typedef struct  procList{
     int pid;                        //process PID
     struct procList *pNextProc;     //points to next process
@@ -42,6 +45,15 @@ typedef struct procQueue {
     int mbox_id;                    //mailbox id (for index reference) todo: remove?
 } ProcQueue;
 
+
+//struct proc_table {
+//    int     index;      //index (pid % MAXSLOTS)
+//    int     pid;        //process pid
+//    void    *message;   //Binary representation of Message
+//    int     status;     //message status
+//};
+//end of Process structures
+
 /* Structures for Mailbox Slot Lists */
 typedef struct  slotList{
     slot_ptr slot;
@@ -49,23 +61,21 @@ typedef struct  slotList{
     struct  slotList *pPrevSlot;    //points to previous process
 } SlotList;
 
-struct slotQueue {
+typedef struct slotQueue{
     SlotList *pHeadSlot;            //points to msg list head
     SlotList *pTailSlot;            //points to msg list tail
     int total;                      //counts total messages
     int mbox_id;                    //mailbox id (for index reference)
-};
+}SlotQueue;
 
-typedef struct slot_Table {
-    //short           slot_id;              //unique slot id //TODO: REMOVE
-    //short           slot_index;           //index (slot_id % MAXSLOTS) TODO: REMOVE
-    //unsigned int    message;              // Binary representation of Message
-    //void            *message;             //Binary representation of Message
-    char            message[MAXMESSAGE];    //Binary representation of Message
+struct slot_table {
+    int             slot_index;             //index (slot_id % MAXSLOTS)
+    int             slot_id;                //unique slot id
+    char            message[MAXMESSAGE];
     int             messageSize;            //size of message
     int             status;                 //message status
     int             mbox_id;                //mailbox id for (for index reference)
-} Slot_Table;
+};
 //end of Slot structures
 
 struct mailbox {
@@ -78,7 +88,7 @@ struct mailbox {
     procQueue   waitingToReceive;   // Linked list of processes to receive a message
     int         maxSlots;           // Maximum number of slots for mailbox
     int         activeSlots;        // Number of active slots
-    int         slotSize;           // Maximum size of slot/ message
+    int         maxMsgSize;         // Maximum size of slot/ message
     slotQueue   slotQueue;          // Corresponding slot within the mailbox
 };
 
