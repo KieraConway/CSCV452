@@ -47,7 +47,7 @@ typedef struct sysargs
         void *arg5;
 } sysargs;
 
-//extern void             (*sys_vec[MAXSYSCALLS])(sysargs *args);
+extern void             (*sys_vec[MAXSYSCALLS])(sysargs *args);
 extern void             (*sys_vec[])(sysargs *args);
 
 #endif

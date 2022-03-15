@@ -100,9 +100,6 @@ void UnblockHandler(ProcQueue *pSaveProc);      //todo DELETE, combine in
 int SendZeroSlot(void *msg_ptr,
                  int msg_size,
                  mailbox * pMbox);              //Handles sending between zero slot mailboxes
-int RecvZeroSlot(void *msg_ptr,
-                 int max_msg_size,
-                 mailbox * pMbox);              //Handles receiving between zero slot mailboxes
 
 /* -------------------------- Globals ------------------------------------- */
 
@@ -160,6 +157,7 @@ int start1(char *arg)
 //    for(int i = 0; i < MAXSYSCALLS; i++){
 //        sys_vec[i] = nullsys;
 //    }
+
 
     /*allocate mailboxes for interrupt handlers */
     clock_mbox = MboxCreate(0, sizeof(int));    //Clock
@@ -328,8 +326,7 @@ int MboxSend(int mbox_id, void *msg_ptr, int msg_size)
 
         /* If Processes Waiting */
         if(!ListIsEmpty(NULL, &pMbox->waitingToReceive)){
-            SendZeroSlot(msg_ptr, msg_size,
-                         pMbox->waitingToReceive.pHeadProc);    //send message
+            SendZeroSlot(msg_ptr, msg_size, pMbox);    //send message
             int pid = RemoveProcessLL(pMbox->waitingToReceive.pHeadProc->pid,
                                       &pMbox->waitingToReceive);    //remove from list
 
