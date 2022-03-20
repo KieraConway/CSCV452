@@ -2,20 +2,22 @@
 #define MESSAGE_H
 
 #include <stdbool.h>
+#include <stdio.h>
 #include <string.h>
 #include "handler.h"
 
 /* ------------------------- Constants ----------------------------------- */
 #define DEBUG2          1
+
 /* Status Constants */
 #define EMPTY           0   // Empty index in Mailbox Table/ Slot Table
 #define MBOX_RELEASED   1   // Mailbox Table Index is Released
 #define MBOX_USED       2   // Mailbox Table Index is Not Empty/ Used
 #define SLOT_FULL       3   // Slot is full and holds a message currently
 #define WAITING         4   // Process is waiting to send or receive a message
-#define SEND_BLOCK      5   // Process is sending a message
-#define RECEIVE_BLOCK   6   // Process is receiving a message
-#define RELEASE_BLOCK   7   // Process is releasing a mailbox
+#define SEND_BLOCK      5   // Process is blocked in send
+#define RECEIVE_BLOCK   6   // Process is blocked in receive
+#define RELEASE_BLOCK   7   // Process is blocked in release
 //#define SLOT_BLOCKED    8   // Process is blocked   //todo remove?
 
 
@@ -58,7 +60,8 @@ struct slot_table {
 
 /* Structures for Processes */
 typedef struct  procList{
-    int pid;                        //process pid
+    int             pid;            //process pid
+    slot_ptr slot;                  //msg index in SlotTable
     SlotList *pSlot;                //pointer to slot
     struct procList *pNextProc;     //points to next process
     struct procList *pPrevProc;     //points to previous process
@@ -67,16 +70,10 @@ typedef struct  procList{
 typedef struct procQueue {
     ProcList *pHeadProc;            //points to msg list head
     ProcList *pTailProc;            //points to msg list tail
-    int total;                      //counts total messages
-    int mbox_id;                    //mailbox id (for index reference) todo: remove?
+    int total;                      //counts total messages todo: remove?
+    int mbox_id;                    //mailbox id (for index reference)
 } ProcQueue;
 
-//struct proc_table {
-//    int     index;      //index (pid % MAXSLOTS)
-//    int     pid;        //process pid
-//    void    *message;   //Binary representation of Message
-//    int     status;     //message status
-//};
 //end of Process structures
 
 struct mailbox {
@@ -87,6 +84,7 @@ struct mailbox {
     procQueue   waitingProcs;       // Linked list of waiting processes to be used to send and receive
     procQueue   waitingToSend;      // Linked list of processes waiting to send a message
     procQueue   waitingToReceive;   // Linked list of processes to receive a message
+    int         totalProcs;         // Number of total processes
     int         maxSlots;           // Maximum number of slots for mailbox
     int         activeSlots;        // Number of active slots
     int         maxMsgSize;         // Maximum size of slot/ message
