@@ -90,8 +90,12 @@ int RemoveSlotLL(slotQueue * pSlot,
                  mailbox * pMbox);               //Remove pSlot from Mailbox Queue
 
 /* Process Lists */
-void AddProcessLL(int pid, procQueue * pq);     //Add pid to Process Queue
+void AddProcessLL(int pid,
+                  procQueue * pq,
+                  slot_ptr zeroSlot,
+                  bool zeroDelivered);           //Add pid to Process Queue
 int RemoveProcessLL(int pid, procQueue * pq);   //Remove pid from Process Queue
+proc_ptr FindProcessLL(int pid, procQueue * pq);     //Finds Process in Process Queue
 
 /* -------------------------- Globals ------------------------------------- */
 
@@ -436,11 +440,11 @@ int check_io()
    Side Effects -   none
    ----------------------------------------------------------------------- */
 int waitdevice(int type, int unit, int *status){
-
     /*** Function Initialization ***/
     check_kernel_mode(__func__);    // Check for kernel mode
     disableInterrupts();                        // Disable interrupts
     int i;
+    int result = 0;
 
     /*** Identify Type ***/
     switch (type) {
@@ -459,43 +463,11 @@ int waitdevice(int type, int unit, int *status){
             halt(1);
     }
 
-    MboxReceive(io_mbox[i + unit], status, sizeof(int));
+    result = MboxReceive(io_mbox[i + unit], status, sizeof(int));
 
     /** Return Error Check: Process was Zapped**/
     enableInterrupts();
-    return is_zapped() ? -1: 0;
-
-//    /*** Function Initialization ***/
-//    int result = 0;
-//
-//    /*** Identify Type ***/
-//    switch(type){
-//        case CLOCK_DEV:
-//            MboxReceive(0, status, sizeof(int));
-//            device_input(type,unit, status);
-//            break;
-//        case DISK_DEV:
-//            result = MboxReceive(disk_mbox[unit], status, sizeof(int));
-//            //DeviceInput(type,unit, status); todo ?
-//            break;
-//        case TERM_DEV:
-//            result = MboxReceive(term_mbox[unit], status, sizeof(int));
-//            //DeviceInput(type,unit, status); todo ?
-//        default:
-//            DebugConsole2("%s : Bad Type (%d). Halting...\n",
-//                          __func__, type);
-//            halt(1);
-//    }
-//    /** Error Check: Process was Zapped**/
-//    if(result == -3){
-//        DebugConsole2("%s: Process was zapped while it was blocked.",
-//                      __func__);
-//        return -1;
-//    }
-//    else{
-//        /*** Function Termination ***/
-//        return 0;               // Successful
-//    }
+    return result == -3 ? -1: 0;
 
 }  /* waitdevice */
 
@@ -520,7 +492,7 @@ int HelperSend(int mbox_id, void *msg, int msg_size, int block_flag)
     /*** Function Initialization ***/
     check_kernel_mode(__func__);    // Check for kernel mode
     disableInterrupts();                        // Disable interrupts
-    int mboxIndex = GetMboxIndex(mbox_id);      //Get Mailbox index in MailboxTable
+    int mboxIndex = GetMboxIndex(mbox_id);      // Get Mailbox index in MailboxTable
     mailbox *pMbox = &MailboxTable[mboxIndex];  // Create Mailbox pointer
 
     DebugConsole2("%s: Function successfully entered.\n",
@@ -539,8 +511,6 @@ int HelperSend(int mbox_id, void *msg, int msg_size, int block_flag)
     if (msg == NULL) {
         if (msg_size > 0) {
 
-            //Note:Null is only invalid for non-zero slot mailboxes
-
             DebugConsole2("%s : Invalid message pointer.\n",
                           __func__);
             enableInterrupts();
@@ -554,114 +524,6 @@ int HelperSend(int mbox_id, void *msg, int msg_size, int block_flag)
                       __func__, msg_size, pMbox->maxMsgSize);
         enableInterrupts();
         return -1;
-    }
-
-    /*** Check if Zero-Slot Mailbox ***/
-    if (pMbox->maxSlots == 0) {
-
-        /** Check Waiting Process **/
-        /* If No Processes Waiting */
-        if (ListIsEmpty(NULL, &pMbox->waitingToReceive)) {
-            AddProcessLL(getpid(),
-                         &pMbox->waitingToSend);    //add proc to waiting list
-            block_me(SEND_BLOCK);                       //block sending process
-
-            /** Error Check: Mailbox was Released **/
-            if(MboxWasReleased(pMbox)){
-                DebugConsole2("%s: Mailbox was released.",
-                              __func__);
-                enableInterrupts();
-                return -3;
-            }
-
-            /** Error Check: Process was Zapped while Blocked **/
-            if (is_zapped()) {
-                DebugConsole2("%s: Process was zapped while it was blocked.",
-                              __func__);
-                enableInterrupts();
-                return -3;
-            }
-
-        }
-
-        /* If Processes Waiting */
-        if (!ListIsEmpty(NULL, &pMbox->waitingToReceive)) {
-            int pid = RemoveProcessLL(pMbox->waitingToReceive.pHeadProc->pid,
-                                      &pMbox->waitingToReceive);    //remove from list
-            unblock_proc(pid);                                          //unlock process
-        }
-        else {
-            DebugConsole2("%s: No process waiting to receive.\n",
-                          __func__);
-            enableInterrupts();
-            return -3;
-        }
-
-        /** Error Check: Mailbox was Released **/
-        if(MboxWasReleased(pMbox)){
-            DebugConsole2("%s: Mailbox was released.",
-                          __func__);
-            enableInterrupts();
-            return -3;
-        }
-
-        /** Error Check: Process was Zapped while Blocked **/
-        if (is_zapped()) {
-            DebugConsole2("%s: Process was zapped while it was blocked.",
-                          __func__);
-            enableInterrupts();
-            return -3;
-        }
-
-        /** Function Termination **/
-        enableInterrupts();     // Enable interrupts
-        return 0;               // Zero-Slot Message Sent Successfully
-
-        //todo:
-        //if message already there, there are no differences between functions
-        //block_flag - should proc wait or ?
-        //if no block, return immediately?
-        //return;
-    }
-
-    /*** Verify Slot is Available ***/
-    /* mboxSend: slot is full */
-    if (block_flag == 0 && pMbox->activeSlots >= pMbox->maxSlots) {  //if exceeding max slots
-        AddProcessLL(getpid(), &pMbox->waitingToSend);      //add proc to waiting list
-        DebugConsole2("%s: Entering a SEND_BLOCK.",
-                      __func__);
-        block_me(SEND_BLOCK);
-
-        /** Error Check: Mailbox was Released **/
-        if(MboxWasReleased(pMbox)){
-            DebugConsole2("%s: Mailbox was released.",
-                          __func__);
-            enableInterrupts();
-            return -3;
-        }
-
-        /** Error Check: Process was Zapped while Blocked **/
-        if (is_zapped()) {
-            DebugConsole2("%s: Process was zapped while it was blocked.",
-                          __func__);
-            enableInterrupts();
-            return -3;
-        }
-    }
-    /* mboxCondSend: slot is full */
-    else if (pMbox->activeSlots >= pMbox->maxSlots) {
-        DebugConsole2("%s : Mailbox Slot Queue is full, unable to send message.\n",
-                      __func__);
-        enableInterrupts();
-        return -2;
-    }
-
-    /*** Error Check: System Slot is Full ***/
-    if (totalActiveSlots >= MAXSLOTS) {
-        DebugConsole2("%s: No Active Slots Available in System,"
-                      " unable to send message.\n", __func__);
-        enableInterrupts();
-        return -2;
     }
 
     /*** Add to Slot Table ***/
@@ -681,20 +543,208 @@ int HelperSend(int mbox_id, void *msg, int msg_size, int block_flag)
     /* Increment Global Counter */
     totalActiveSlots++;
 
+    /** Add Process to waitingProcs **/
+    AddProcessLL(getpid(),&pMbox->activeProcs,pSlot, false);
+
+    /*** Check if Zero-Slot Mailbox ***/
+    if (pMbox->maxSlots == 0) {
+
+        /** Check Waiting Process **/
+        /* If No Processes Waiting */
+        if (ListIsEmpty(NULL, &pMbox->waitingToReceive)){
+
+            /* Add Current Process to Waiting List */
+            AddProcessLL(getpid(),
+                         &pMbox->waitingToSend,
+                         pSlot,
+                         false);
+
+            /* Remove Current Process from Active List */
+            RemoveProcessLL(getpid(),
+                            &pMbox->activeProcs);
+
+            /* Block Sending Process */
+            block_me(SEND_BLOCK);
+
+
+            /** Error Check: Mailbox was Released **/
+            if(MboxWasReleased(pMbox)){
+                DebugConsole2("%s: Mailbox was released.",
+                              __func__);
+                enableInterrupts();
+                return -3;
+            }
+
+            /** Error Check: Process was Zapped while Blocked **/
+            if (is_zapped()) {
+                DebugConsole2("%s: Process was zapped while it was blocked.",
+                              __func__);
+                /* Remove Current Process from Active List */
+                RemoveProcessLL(getpid(),
+                                &pMbox->activeProcs);
+                enableInterrupts();
+                return -3;
+            }
+
+        }
+
+        /** Check Message Delivery **/
+        /* Find Process in Active Process List */
+        proc_ptr pProc = FindProcessLL(getpid(), &pMbox->activeProcs);
+
+        /* If Message Not Delivered */
+        if(!pProc->zeroDelivered) {
+
+            /* If Processes Waiting */
+            if (!ListIsEmpty(NULL, &pMbox->waitingToReceive)) {
+
+                /** Unblock Waiting Process **/
+                /* Add Blocked Process to Active List */
+                AddProcessLL(pMbox->waitingToReceive.pHeadProc->pid,
+                             &pMbox->activeProcs,
+                             NULL,
+                             NULL);
+
+                /* Remove Blocked Process from Waiting List */
+                int pid = RemoveProcessLL(pMbox->waitingToReceive.pHeadProc->pid,
+                                          &pMbox->waitingToReceive);
+
+                /* Unblock Process */
+                unblock_proc(pid);
+            }
+            /* If No Processes Waiting: Message not Delivered*/
+            else {
+                DebugConsole2("%s: No process waiting to receive.\n",
+                              __func__);
+                RemoveProcessLL(getpid(),
+                                &pMbox->activeProcs);
+                enableInterrupts();
+                return -3;
+            }
+        }
+
+        /** Error Check: Mailbox was Released **/
+        if(MboxWasReleased(pMbox)){
+            DebugConsole2("%s: Mailbox was released.",
+                          __func__);
+            enableInterrupts();
+            return -3;
+        }
+
+        /** Error Check: Process was Zapped while Blocked **/
+        if (is_zapped()) {
+            DebugConsole2("%s: Process was zapped while it was blocked.",
+                          __func__);
+            RemoveProcessLL(getpid(),
+                            &pMbox->activeProcs);
+            enableInterrupts();
+            return -3;
+        }
+
+        /** Function Termination **/
+        RemoveProcessLL(getpid(),
+                        &pMbox->activeProcs);
+        enableInterrupts();     // Enable interrupts
+        return 0;               // Zero-Slot Message Sent Successfully
+
+    }
+
+    /*** Verify Slot is Available ***/
+    /* mboxSend: slot is full */
+    if (block_flag == 0 && pMbox->activeSlots >= pMbox->maxSlots) {  //if exceeding max slots
+        /* Find Process in Active Process List */
+        proc_ptr pProc = FindProcessLL(getpid(), &pMbox->activeProcs);
+
+        /* Add Current Process to Waiting List */
+        AddProcessLL(getpid(),
+                     &pMbox->waitingToSend,
+                     pProc->zeroSlot,
+                     pProc->zeroDelivered);
+
+        /* Remove Current Process from Active List */
+        RemoveProcessLL(getpid(),
+                        &pMbox->activeProcs);
+
+        /* Block Sending Process */
+        block_me(SEND_BLOCK);
+
+        /** Error Check: Mailbox was Released **/
+        if(MboxWasReleased(pMbox)){
+            DebugConsole2("%s: Mailbox was released.",
+                          __func__);
+            enableInterrupts();
+            return -3;
+        }
+
+        /** Error Check: Process was Zapped while Blocked **/
+        if (is_zapped()) {
+            DebugConsole2("%s: Process was zapped while it was blocked.",
+                          __func__);
+            /* Remove Current Process from Active List */
+            RemoveProcessLL(getpid(),
+                            &pMbox->activeProcs);
+            enableInterrupts();
+            return -3;
+        }
+    }
+    /* mboxCondSend: slot is full */
+    else if (pMbox->activeSlots >= pMbox->maxSlots) {
+        DebugConsole2("%s : Mailbox Slot Queue is full, unable to send message.\n",
+                      __func__);
+        /* Remove Current Process from Active List */
+        RemoveProcessLL(getpid(),
+                        &pMbox->activeProcs);
+        enableInterrupts();
+        return -2;
+    }
+
+    /*** Error Check: System Slot is Full ***/
+    if (totalActiveSlots >= MAXSLOTS) {
+        DebugConsole2("%s: No Active Slots Available in System,"
+                      " unable to send message.\n", __func__);
+        /* Remove Current Process from Active List */
+        RemoveProcessLL(getpid(),
+                        &pMbox->activeProcs);
+        enableInterrupts();
+        return -2;
+    }
+
     /*** Add Slot pointer in Mailbox Queue ***/
-    if((AddSlotLL(pSlot, pMbox)) == -1){
-        DebugConsole2("%s: Slot Queue is full.\n", __func__);
-        return -3;
+    /* Find Process in Active Process List */
+    proc_ptr pProc = FindProcessLL(getpid(), &pMbox->activeProcs);
+
+    /* Add to Process Queue if not Already Added */
+    if(!pProc->zeroSlot == NULL) {
+        if ((AddSlotLL(pSlot, pMbox)) == -1) {
+            DebugConsole2("%s: Slot Queue is full.\n", __func__);
+            /* Remove Current Process from Active List */
+            RemoveProcessLL(getpid(),
+                            &pMbox->activeProcs);
+            return -3;
+        }
     }
 
     /*** Unblock Waiting Processes ***/
     if(!ListIsEmpty(NULL, &pMbox->waitingToReceive)){
+
+        /* Add Blocked Process to Active List */
+        AddProcessLL(pMbox->waitingToReceive.pHeadProc->pid,
+                     &pMbox->activeProcs,
+                     NULL,
+                     NULL);
+
+        /* Remove Blocked Process from Waiting List */
         int pid = RemoveProcessLL(pMbox->waitingToReceive.pHeadProc->pid,
-                                  &pMbox->waitingToReceive);    //remove from list
-        unblock_proc(pid);                                          //unlock process
+                                  &pMbox->waitingToReceive);
+
+        /* Unblock Process */
+        unblock_proc(pid);
     }
 
     /*** Function Termination ***/
+    /* Remove Current Process from Active List */
+    RemoveProcessLL(getpid(),
+                    &pMbox->activeProcs);
     enableInterrupts();     // Enable interrupts
     return 0;               // Message Sent Successfully
 
@@ -715,8 +765,10 @@ int HelperReceive(int mbox_id, void *msg, int max_msg_size, int block_flag)
     /*** Function Initialization ***/
     check_kernel_mode(__func__);    // Check for kernel mode
     disableInterrupts();                        // Disable interrupts
+    int sentMsgSize = 0;                        // Size of message sent
     int mboxIndex = GetMboxIndex(mbox_id);      //Get Mailbox index in MailboxTable
     mailbox *pMbox = &MailboxTable[mboxIndex];  // Create Mailbox pointer
+
 
     DebugConsole2("%s: Function successfully entered.\n",
                   __func__);
@@ -738,11 +790,14 @@ int HelperReceive(int mbox_id, void *msg, int max_msg_size, int block_flag)
         return -1;
     }
 
-    /*** Error Check: Mailbox was Released ***/
+    /*** Error Check: Mailbox was Released ***/ //todo: do we need this here?
     if (MboxWasReleased(pMbox)) {
         enableInterrupts();
         return -3;
     }
+
+    /*** Add Process to Active List ***/
+    AddProcessLL(getpid(),&pMbox->activeProcs,NULL, NULL);
 
     /*** Check if Zero-Slot Mailbox ***/
     if(pMbox->maxSlots == 0){
@@ -750,9 +805,19 @@ int HelperReceive(int mbox_id, void *msg, int max_msg_size, int block_flag)
         /** Check Waiting Process **/
         /* If No Processes Waiting */
         if(ListIsEmpty(NULL, &pMbox->waitingToSend)){
+
+            /* Add Current Process to Waiting List */
             AddProcessLL(getpid(),
-                         &pMbox->waitingToReceive);   //add proc to waiting list
-            block_me(RECEIVE_BLOCK);                      //block sending process
+                         &pMbox->waitingToReceive,
+                         NULL,
+                         NULL);
+
+            /* Remove Current Process from Active List */
+            RemoveProcessLL(getpid(),
+                            &pMbox->activeProcs);
+
+            /* Block Sending Process */
+            block_me(RECEIVE_BLOCK);
 
             /** Error Check: Mailbox was Released **/
             if(MboxWasReleased(pMbox)){
@@ -766,6 +831,9 @@ int HelperReceive(int mbox_id, void *msg, int max_msg_size, int block_flag)
             if (is_zapped()) {
                 DebugConsole2("%s: Process was zapped while it was blocked.",
                               __func__);
+                /* Remove Current Process from Active List */
+                RemoveProcessLL(getpid(),
+                                &pMbox->activeProcs);
                 enableInterrupts();
                 return -3;
             }
@@ -773,13 +841,57 @@ int HelperReceive(int mbox_id, void *msg, int max_msg_size, int block_flag)
 
         /* If Processes Waiting */
         if(!ListIsEmpty(NULL, &pMbox->waitingToSend)){
+            /*** Error Check: Sent Message Size Exceeds Limit ***/
+            sentMsgSize = pMbox->waitingToSend.pHeadProc->zeroSlot->messageSize;
+            if (sentMsgSize > max_msg_size) {
+                DebugConsole2("%s : Sent message size [%d] exceeds maximum receive size [%d] .\n",
+                              __func__, sentMsgSize, max_msg_size);
+                /* Remove Current Process from Active List */
+                RemoveProcessLL(getpid(),
+                                &pMbox->activeProcs);
+                enableInterrupts();
+                return -1;
+            }
+
+            /*** Retrieve Message ***/
+            /* copy message into buffer */
+            memcpy(msg, &pMbox->waitingToSend.pHeadProc->zeroSlot->message, sentMsgSize);
+
+            /*** Update Tables and Queues ***/
+            /* save index of pHead for InitializeSlot() */
+            int waitSlotIndex = pMbox->waitingToSend.pHeadProc->zeroSlot->slot_index;
+
+            /* Remove Slot from SlotTable */
+            InitializeSlot(EMPTY,
+                           waitSlotIndex,
+                           -1,
+                           NULL,
+                           -1,
+                           -1);
+
+            /* Decrement Global Counter */
+            totalActiveSlots--;
+
+            /*** Unblock Waiting Process ***/
+            /* Add Blocked Process to Active List */
+            AddProcessLL(pMbox->waitingToSend.pHeadProc->pid,
+                         &pMbox->activeProcs,
+                         &pMbox->waitingToSend.pHeadProc->zeroSlot->message,
+                         true);
+
+            /* Remove Blocked Process from Waiting List */
             int pid = RemoveProcessLL(pMbox->waitingToSend.pHeadProc->pid,
                                       &pMbox->waitingToSend);    //remove from list
-            unblock_proc(pid);                                          //unlock process
+
+            /* Unblock Process */
+            unblock_proc(pid);
         }
         else{
             DebugConsole2("%s: No process waiting to receive.",
                           __func__);
+            /* Remove Current Process from Active List */
+            RemoveProcessLL(getpid(),
+                            &pMbox->activeProcs);
             enableInterrupts();
             return -3;
         }
@@ -794,22 +906,37 @@ int HelperReceive(int mbox_id, void *msg, int max_msg_size, int block_flag)
         if(is_zapped()){
             DebugConsole2("%s: Process was zapped while it was blocked.",
                           __func__);
+            /* Remove Current Process from Active List */
+            RemoveProcessLL(getpid(),
+                            &pMbox->activeProcs);
             enableInterrupts();
             return -3;
         }
 
         /** Function Termination **/
+        /* Remove Current Process from Active List */
+        RemoveProcessLL(getpid(),
+                        &pMbox->activeProcs);
         enableInterrupts();     // Enable interrupts
-        return pMbox->slotQueue.pHeadSlot->slot->messageSize; // Zero-Slot Message Recvd Successfully
+        return sentMsgSize;     // Zero-Slot Message Recvd Successfully
     }
 
     /*** Verify Message is Available ***/
     /* mboxReceive: no message available */
-    if (block_flag == 0 && pMbox->activeSlots <= 0) {                    //if no message available
-        AddProcessLL(getpid(), &pMbox->waitingToReceive);   //add proc to waiting list
-        DebugConsole2("%s: Entering a RECEIVE_BLOCK.",
-                      __func__);
-        block_me(RECEIVE_BLOCK);                                    //block receiving process
+    if (block_flag == 0 && pMbox->activeSlots <= 0) {
+
+        /* Add Current Process to Waiting List */
+        AddProcessLL(getpid(),
+                     &pMbox->waitingToReceive,
+                     NULL,
+                     NULL);
+
+        /* Remove Current Process from Active List */
+        RemoveProcessLL(getpid(),
+                        &pMbox->activeProcs);
+
+        /* Block Sending Process */
+        block_me(RECEIVE_BLOCK);
 
         /** Error Check: Mailbox was Released **/
         if(MboxWasReleased(pMbox)){
@@ -823,6 +950,9 @@ int HelperReceive(int mbox_id, void *msg, int max_msg_size, int block_flag)
         if (is_zapped()) {
             DebugConsole2("%s: Process was zapped while it was blocked.",
                           __func__);
+            /* Remove Current Process from Active List */
+            RemoveProcessLL(getpid(),
+                            &pMbox->activeProcs);
             enableInterrupts();
             return -3;
         }
@@ -831,16 +961,22 @@ int HelperReceive(int mbox_id, void *msg, int max_msg_size, int block_flag)
     else if(pMbox->activeSlots <= 0){
             DebugConsole2("%s : No message available in mailbox.\n",
                           __func__);
+            /* Remove Current Process from Active List */
+            RemoveProcessLL(getpid(),
+                            &pMbox->activeProcs);
             enableInterrupts();
             return -2;
     }
 
 
     /*** Error Check: Sent Message Size Exceeds Limit ***/
-    int sentMsgSize = pMbox->slotQueue.pHeadSlot->slot->messageSize;
+    sentMsgSize = pMbox->slotQueue.pHeadSlot->slot->messageSize;
     if (sentMsgSize > max_msg_size) {
         DebugConsole2("%s : Sent message size [%d] exceeds maximum receive size [%d] .\n",
                       __func__, sentMsgSize, max_msg_size);
+        /* Remove Current Process from Active List */
+        RemoveProcessLL(getpid(),
+                        &pMbox->activeProcs);
         enableInterrupts();
         return -1;
     }
@@ -857,6 +993,9 @@ int HelperReceive(int mbox_id, void *msg, int max_msg_size, int block_flag)
     if((RemoveSlotLL(&pMbox->slotQueue, pMbox)) == -1){
         DebugConsole2("%s: Unable to receive message - mailbox empty. Halting...",
                       __func__);
+        /* Remove Current Process from Active List */
+        RemoveProcessLL(getpid(),
+                        &pMbox->activeProcs);
         return -3;
     }
 
@@ -872,13 +1011,38 @@ int HelperReceive(int mbox_id, void *msg, int max_msg_size, int block_flag)
     totalActiveSlots--;
 
     /*** Unblock Waiting Processes ***/
-    if(!ListIsEmpty(NULL, &pMbox->waitingToSend)){  //if proc waiting to send
+    if(!ListIsEmpty(NULL, &pMbox->waitingToSend)){
+
+        /*** Add Slot pointer in Mailbox Queue ***/
+        if((AddSlotLL(pMbox->waitingToSend.pHeadProc->zeroSlot, pMbox)) == -1){
+            DebugConsole2("%s: Slot Queue is full.\n", __func__);
+            /* Remove Current Process from Active List */
+            RemoveProcessLL(getpid(),
+                            &pMbox->activeProcs);
+            return -3;
+        }
+
+        /* Increment Global Counter */
+        totalActiveSlots++;
+
+        /* Add Blocked Process to Active List */
+        AddProcessLL(pMbox->waitingToSend.pHeadProc->pid,
+                     &pMbox->activeProcs,
+                     NULL,
+                     NULL);
+
+        /* Remove Blocked Process from Waiting List */
         int pid = RemoveProcessLL(pMbox->waitingToSend.pHeadProc->pid,
-                                  &pMbox->waitingToSend);   //remove proc from block list
-        unblock_proc(pid);                                      //unlock proc
+                                  &pMbox->waitingToSend);
+
+        /* Unblock Process */
+        unblock_proc(pid);
     }
 
     /*** Function Termination ***/
+    /* Remove Current Process from Active List */
+    RemoveProcessLL(getpid(),
+                    &pMbox->activeProcs);
     enableInterrupts();     // Enable interrupts
     return sentMsgSize;     //Return size of message received
 
@@ -1026,7 +1190,7 @@ void InitializeMailbox(int newStatus, int mbox_index, int mbox_id, int maxSlots,
     pMbox->mbox_index = mbox_index;               //Mailbox Slot
     pMbox->mbox_id = mbox_id;                     //Mailbox ID
     pMbox->status = newStatus;                    //Mailbox Status
-    InitializeList(NULL, &pMbox->waitingProcs);   //Waiting Process List //todo delete?
+    InitializeList(NULL, &pMbox->activeProcs);   //Waiting Process List
     InitializeList(NULL, &pMbox->waitingToSend);  //Waiting to Send List
     InitializeList(NULL, &pMbox->waitingToReceive);//Waiting to Receive List
     pMbox->maxSlots = maxSlots;                   //Max Slots
@@ -1341,10 +1505,13 @@ int RemoveSlotLL(slotQueue * pSlot, mailbox * pMbox){
     Purpose -       Add Process to Specified Process Queue
     Parameters -    pid:    Process ID
                     pq:     Pointer to Process Queue
+                    ~ Zero Slot Use Only ~
+                    zeroSlot:       points to Slot Table
+                    zeroDelivered:  indicates if zero message delivered
     Returns -       None, halt (1) on error
     Side Effects -  None
    ----------------------------------------------------------------------- */
-void AddProcessLL(int pid, procQueue * pq){
+void AddProcessLL(int pid, procQueue * pq, slot_ptr zeroSlot, bool zeroDelivered){
 
     /*** Function Initialization ***/
     mailbox * pMbox = GetMboxIndex(pq->mbox_id);
@@ -1369,8 +1536,17 @@ void AddProcessLL(int pid, procQueue * pq){
     }
 
 
+    /*** Update Node Values ***/
+    /* Pid Value */
+    pNew->pid = pid;
+
+    /* SlotTable Pointer */
+    if(zeroSlot){
+        pNew->zeroSlot = zeroSlot;
+        pNew->zeroDelivered = zeroDelivered;
+    }
+
     /*** Add New Node to List ***/
-    pNew->pid = pid;                            //update pid value
     pNew->pNextProc = NULL;                     //assign pNext to NULL
 
     if(ListIsEmpty(NULL, pq)){      //if list is empty...
@@ -1489,6 +1665,52 @@ int RemoveProcessLL(int pid, procQueue * pq){
 
 }/* RemoveProcessLL */
 
+
+
+/* ------------------------------------------------------------------------
+    Name -          FindProcessLL
+    Purpose -       Finds Process inside Specified Process Queue
+    Parameters -    pid:    Process ID
+                    pq:     Pointer to Process Queue
+    Returns -       Pointer to found Process
+    Side Effects -  None
+   ----------------------------------------------------------------------- */
+proc_ptr FindProcessLL(int pid, procQueue * pq){
+
+    /*** Function Initialization ***/
+    ProcList * pSave;   //Pointer for Linked List
+    int pidFlag = 0;    //verify pid found in list
+
+
+    /*** Error Check: List is Empty ***/
+    if(ListIsEmpty(NULL, pq)){
+        DebugConsole2("%s: Queue is empty.\n", __func__);
+        return NULL;
+    }
+
+
+    /*** Find PID ***/
+    pSave = pq->pHeadProc;          //Set pSave to head of list
+
+    while(pSave->pid != 0) {        //verify not end of list
+        if(pSave->pid == pid){      //if found pid...
+
+            /*** Function Termination ***/
+            return pSave;           //process found
+
+        }
+        else{                           //if pid not found
+            pSave = pSave->pNextProc;   //increment to next in list
+        }
+    }//end while
+
+
+    /*** Function Termination ***/
+    return NULL;     //process not found
+
+}/* RemoveProcessLL */
+
+
 /* * * * * * * * * * * * END OF Linked List Functions * * * * * * * * * * * */
 
 
@@ -1515,7 +1737,13 @@ void HelperRelease(mailbox *pMbox) {
         DebugConsole2("%s: Unblocking RECEIVE_BLOCK",
                       __func__);
 
-        /* Remove from List */
+        /* Add Blocked Process to Active List */
+        AddProcessLL(pMbox->waitingToReceive.pHeadProc->pid,
+                     &pMbox->activeProcs,
+                     NULL,
+                     NULL);
+
+        /* Remove Blocked Process from Waiting List */
         int pid = RemoveProcessLL(pMbox->waitingToReceive.pHeadProc->pid,
                                   &pMbox->waitingToReceive);
 
@@ -1529,12 +1757,19 @@ void HelperRelease(mailbox *pMbox) {
     while (pMbox->waitingToSend.total > 0) {
         DebugConsole2("%s: Unblocking SEND_BLOCK",
                       __func__);
-        /* Remove from List */
+
+        /* Add Blocked Process to Active List */
+        AddProcessLL(pMbox->waitingToSend.pHeadProc->pid,
+                     &pMbox->activeProcs,
+                     NULL,
+                     NULL);
+
+        /* Remove Blocked Process from Waiting List */
         int pid = RemoveProcessLL(pMbox->waitingToSend.pHeadProc->pid,
                                   &pMbox->waitingToSend);
         /* Unblock Process */
         unblock_proc(pid);
-        disableInterrupts();;
+        disableInterrupts();
     }
 
 
@@ -1583,6 +1818,9 @@ bool MboxWasReleased(mailbox *pMbox){
         }
         /* Multiple Processes Remaining */
         else{
+            /* Remove Current Process from Active List */
+            RemoveProcessLL(getpid(),
+                            &pMbox->activeProcs);
             pMbox->totalProcs--;
         }
 
