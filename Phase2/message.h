@@ -25,11 +25,10 @@
 typedef struct procQueue procQueue;
 typedef struct slotQueue slotQueue;
 
-typedef struct proc_table proc_table;
 typedef struct slot_table slot_table;
 typedef struct mailbox mailbox;
 
-typedef struct proc_table * proc_ptr;   //todo: delete if unused
+typedef struct procList * proc_ptr;
 typedef struct slot_table * slot_ptr;
 
 
@@ -53,16 +52,16 @@ struct slot_table {
     char            message[MAXMESSAGE];    //contains message
     int             messageSize;            //size of message
     int             status;                 //message status
-    bool            delivered;              //indicates if message delivered
+    //bool            delivered;              //indicates if message delivered
     int             mbox_id;                //mailbox id for (for index reference)
 };
 //end of Slot structures
 
 /* Structures for Processes */
 typedef struct  procList{
-    int             pid;            //process pid
-    slot_ptr slot;                  //msg index in SlotTable
-    SlotList *pSlot;                //pointer to slot
+    int         pid;                //process pid
+    slot_ptr    zeroSlot;           //msg index in SlotTable for zero slots
+    bool        zeroDelivered;      //indicates if zero-slot message delivered
     struct procList *pNextProc;     //points to next process
     struct procList *pPrevProc;     //points to previous process
 } ProcList;
@@ -79,9 +78,9 @@ typedef struct procQueue {
 struct mailbox {
     int         mbox_index;         // Location inside MailboxTable
     int         mbox_id;            // Unique Mailbox ID
-    int         status;
+    int         status;             // Contains the Mailbox Status [0-2]
     int         releaser;           // If mailbox is released, holds the releaser PID
-    procQueue   waitingProcs;       // Linked list of waiting processes to be used to send and receive
+    procQueue   activeProcs;        // Linked list of active processes
     procQueue   waitingToSend;      // Linked list of processes waiting to send a message
     procQueue   waitingToReceive;   // Linked list of processes to receive a message
     int         totalProcs;         // Number of total processes
