@@ -86,16 +86,19 @@ bool ListIsEmpty(const slotQueue *pSlot,
 /* Slot Lists */
 int AddSlotLL(slot_table * pSlot,
               mailbox * pMbox);                  //Add pSlot to Mailbox Queue
-int RemoveSlotLL(slotQueue * pSlot,
-                 mailbox * pMbox);               //Remove pSlot from Mailbox Queue
+int RemoveSlotLL(int slot_id,
+                 slotQueue * sq);               //Remove pSlot from Mailbox Queue
+slot_ptr FindSlotLL(int slot_id,
+                  slotQueue * pq);              //Finds Slot in Slot Queue
 
 /* Process Lists */
 void AddProcessLL(int pid,
-                  procQueue * pq,
-                  slot_ptr zeroSlot,
-                  bool zeroDelivered);           //Add pid to Process Queue
+                  procQueue * pq);           //Add pid to Process Queue
 int RemoveProcessLL(int pid, procQueue * pq);   //Remove pid from Process Queue
-proc_ptr FindProcessLL(int pid, procQueue * pq);     //Finds Process in Process Queue
+proc_ptr CopyProcessLL(int pid,
+                  procQueue * sourceQueue,
+                  procQueue * destQueue);       //Copies a Process to another Queue
+proc_ptr FindProcessLL(int pid, procQueue * pq);//Finds Process in Process Queue
 
 /* -------------------------- Globals ------------------------------------- */
 
@@ -494,6 +497,7 @@ int HelperSend(int mbox_id, void *msg, int msg_size, int block_flag)
     disableInterrupts();                        // Disable interrupts
     int mboxIndex = GetMboxIndex(mbox_id);      // Get Mailbox index in MailboxTable
     mailbox *pMbox = &MailboxTable[mboxIndex];  // Create Mailbox pointer
+    proc_ptr pCurProc;                          // Pointer to Current Process
 
     DebugConsole2("%s: Function successfully entered.\n",
                   __func__);
@@ -543,29 +547,36 @@ int HelperSend(int mbox_id, void *msg, int msg_size, int block_flag)
     /* Increment Global Counter */
     totalActiveSlots++;
 
-    /** Add Process to waitingProcs **/
-    AddProcessLL(getpid(),&pMbox->activeProcs,pSlot, false);
+    /*** Update Process ***/
+    /* Add Process to Active Procs **/
+    AddProcessLL(getpid(),&pMbox->activeProcs);
+
+    /* Create Process Pointer */
+    pCurProc = FindProcessLL(getpid(), &pMbox->activeProcs);
+
+    /* Assign Starting Values */
+    pCurProc->delivered = false;    //msg not delivered yet
+    pCurProc->slot_id = slotID;
+
 
     /*** Check if Zero-Slot Mailbox ***/
     if (pMbox->maxSlots == 0) {
+
+        /** Update Zero Slot **/
+        pCurProc->zeroSlot = pSlot;
 
         /** Check Waiting Process **/
         /* If No Processes Waiting */
         if (ListIsEmpty(NULL, &pMbox->waitingToReceive)){
 
-            /* Add Current Process to Waiting List */
-            AddProcessLL(getpid(),
-                         &pMbox->waitingToSend,
-                         pSlot,
-                         false);
-
-            /* Remove Current Process from Active List */
-            RemoveProcessLL(getpid(),
-                            &pMbox->activeProcs);
+            /** Block Current Process **/
+            /* Copy Process to Wait List */
+            CopyProcessLL(getpid(),
+                          &pMbox->activeProcs,
+                          &pMbox->waitingToSend);
 
             /* Block Sending Process */
             block_me(SEND_BLOCK);
-
 
             /** Error Check: Mailbox was Released **/
             if(MboxWasReleased(pMbox)){
@@ -590,27 +601,27 @@ int HelperSend(int mbox_id, void *msg, int msg_size, int block_flag)
 
         /** Check Message Delivery **/
         /* Find Process in Active Process List */
-        proc_ptr pProc = FindProcessLL(getpid(), &pMbox->activeProcs);
+        pCurProc = FindProcessLL(getpid(), &pMbox->activeProcs);
 
-        /* If Message Not Delivered */
-        if(!pProc->zeroDelivered) {
+        /* If Current Process Message Not Delivered */
+        if(!pCurProc->delivered) {
 
             /* If Processes Waiting */
             if (!ListIsEmpty(NULL, &pMbox->waitingToReceive)) {
 
                 /** Unblock Waiting Process **/
-                /* Add Blocked Process to Active List */
-                AddProcessLL(pMbox->waitingToReceive.pHeadProc->pid,
-                             &pMbox->activeProcs,
-                             NULL,
-                             NULL);
+                /* Copy to Active List */
+                proc_ptr pWaitProc = CopyProcessLL(pMbox->waitingToReceive.pHeadProc->pid,
+                                                   &pMbox->waitingToReceive,
+                                                   &pMbox->activeProcs);
 
-                /* Remove Blocked Process from Waiting List */
-                int pid = RemoveProcessLL(pMbox->waitingToReceive.pHeadProc->pid,
-                                          &pMbox->waitingToReceive);
+                /* Send Message and Update Flag */
+                pWaitProc->zeroSlot = pSlot;    //slot table pointer
+                pWaitProc->delivered = true;    //trigger delivered flag
 
                 /* Unblock Process */
-                unblock_proc(pid);
+                unblock_proc(pWaitProc->pid);
+
             }
             /* If No Processes Waiting: Message not Delivered*/
             else {
@@ -648,22 +659,20 @@ int HelperSend(int mbox_id, void *msg, int msg_size, int block_flag)
         return 0;               // Zero-Slot Message Sent Successfully
 
     }
+    /* Not Zero Slot */
+    else{
+        pCurProc->zeroSlot = NULL;
+    }
 
     /*** Verify Slot is Available ***/
     /* mboxSend: slot is full */
-    if (block_flag == 0 && pMbox->activeSlots >= pMbox->maxSlots) {  //if exceeding max slots
-        /* Find Process in Active Process List */
-        proc_ptr pProc = FindProcessLL(getpid(), &pMbox->activeProcs);
+    if (block_flag == 0 && pMbox->activeSlots >= pMbox->maxSlots) {
 
-        /* Add Current Process to Waiting List */
-        AddProcessLL(getpid(),
-                     &pMbox->waitingToSend,
-                     pProc->zeroSlot,
-                     pProc->zeroDelivered);
-
-        /* Remove Current Process from Active List */
-        RemoveProcessLL(getpid(),
-                        &pMbox->activeProcs);
+        /** Block Current Process **/
+        /* Copy Process to Wait List */
+        CopyProcessLL(getpid(),
+                      &pMbox->activeProcs,
+                      &pMbox->waitingToSend);
 
         /* Block Sending Process */
         block_me(SEND_BLOCK);
@@ -699,7 +708,7 @@ int HelperSend(int mbox_id, void *msg, int msg_size, int block_flag)
     }
 
     /*** Error Check: System Slot is Full ***/
-    if (totalActiveSlots >= MAXSLOTS) {
+    if (totalActiveSlots > MAXSLOTS) {
         DebugConsole2("%s: No Active Slots Available in System,"
                       " unable to send message.\n", __func__);
         /* Remove Current Process from Active List */
@@ -711,10 +720,10 @@ int HelperSend(int mbox_id, void *msg, int msg_size, int block_flag)
 
     /*** Add Slot pointer in Mailbox Queue ***/
     /* Find Process in Active Process List */
-    proc_ptr pProc = FindProcessLL(getpid(), &pMbox->activeProcs);
+    pCurProc = FindProcessLL(getpid(), &pMbox->activeProcs);
 
     /* Add to Process Queue if not Already Added */
-    if(!pProc->zeroSlot == NULL) {
+    if(pCurProc->delivered == false) {
         if ((AddSlotLL(pSlot, pMbox)) == -1) {
             DebugConsole2("%s: Slot Queue is full.\n", __func__);
             /* Remove Current Process from Active List */
@@ -723,22 +732,29 @@ int HelperSend(int mbox_id, void *msg, int msg_size, int block_flag)
             return -3;
         }
     }
+    /* Update Delivered Flag */
+    pCurProc->delivered = true;
 
-    /*** Unblock Waiting Processes ***/
+    /*** Check for Waiting Processes ***/
     if(!ListIsEmpty(NULL, &pMbox->waitingToReceive)){
 
-        /* Add Blocked Process to Active List */
-        AddProcessLL(pMbox->waitingToReceive.pHeadProc->pid,
-                     &pMbox->activeProcs,
-                     NULL,
-                     NULL);
+        /** Send Message to Waiting Process **/
+        /* Find Receiving Process in Waiting Process List */
+        proc_ptr pRecvProc = pMbox->waitingToReceive.pHeadProc;
 
-        /* Remove Blocked Process from Waiting List */
-        int pid = RemoveProcessLL(pMbox->waitingToReceive.pHeadProc->pid,
-                                  &pMbox->waitingToReceive);
+        /* Send Message and Update Flag */
+        pRecvProc->slot_id = slotID;    //slot queue index
+        pRecvProc->delivered = true;    //trigger delivered flag
+
+
+        /** Unblock Waiting Process **/
+        /* Copy to Active List */
+        pRecvProc = CopyProcessLL(pRecvProc->pid,
+                                  &pMbox->waitingToReceive,
+                                  &pMbox->activeProcs);
 
         /* Unblock Process */
-        unblock_proc(pid);
+        unblock_proc(pRecvProc->pid);
     }
 
     /*** Function Termination ***/
@@ -768,7 +784,8 @@ int HelperReceive(int mbox_id, void *msg, int max_msg_size, int block_flag)
     int sentMsgSize = 0;                        // Size of message sent
     int mboxIndex = GetMboxIndex(mbox_id);      //Get Mailbox index in MailboxTable
     mailbox *pMbox = &MailboxTable[mboxIndex];  // Create Mailbox pointer
-
+    proc_ptr pCurProc;                          // Pointer to Current Process
+    slot_ptr pSlot;                             // Pointer to Slot in Mailbox Queue
 
     DebugConsole2("%s: Function successfully entered.\n",
                   __func__);
@@ -796,8 +813,16 @@ int HelperReceive(int mbox_id, void *msg, int max_msg_size, int block_flag)
         return -3;
     }
 
-    /*** Add Process to Active List ***/
-    AddProcessLL(getpid(),&pMbox->activeProcs,NULL, NULL);
+    /*** Update Process ***/
+    /* Add Process to Active Procs **/
+    AddProcessLL(getpid(),&pMbox->activeProcs);
+
+    /* Create Process Pointer */
+    pCurProc = FindProcessLL(getpid(), &pMbox->activeProcs);
+
+    /* Assign Starting Values */
+    pCurProc->delivered = false;    //msg not delivered yet
+    pCurProc->slot_id = -1;
 
     /*** Check if Zero-Slot Mailbox ***/
     if(pMbox->maxSlots == 0){
@@ -806,17 +831,13 @@ int HelperReceive(int mbox_id, void *msg, int max_msg_size, int block_flag)
         /* If No Processes Waiting */
         if(ListIsEmpty(NULL, &pMbox->waitingToSend)){
 
-            /* Add Current Process to Waiting List */
-            AddProcessLL(getpid(),
-                         &pMbox->waitingToReceive,
-                         NULL,
-                         NULL);
+            /** Block Current Process **/
+            /* Copy Process to Wait List */
+            CopyProcessLL(getpid(),
+                          &pMbox->activeProcs,
+                          &pMbox->waitingToReceive);
 
-            /* Remove Current Process from Active List */
-            RemoveProcessLL(getpid(),
-                            &pMbox->activeProcs);
-
-            /* Block Sending Process */
+            /* Block Receiving Process */
             block_me(RECEIVE_BLOCK);
 
             /** Error Check: Mailbox was Released **/
@@ -839,10 +860,93 @@ int HelperReceive(int mbox_id, void *msg, int max_msg_size, int block_flag)
             }
         }
 
-        /* If Processes Waiting */
-        if(!ListIsEmpty(NULL, &pMbox->waitingToSend)){
-            /*** Error Check: Sent Message Size Exceeds Limit ***/
-            sentMsgSize = pMbox->waitingToSend.pHeadProc->zeroSlot->messageSize;
+        /** Check Message Delivery **/
+        /* Find Process in Active Process List */
+        pCurProc = FindProcessLL(getpid(), &pMbox->activeProcs);
+
+        /* If Current Process Message Not Delivered */
+        if(!pCurProc->delivered) {
+
+            /* If Processes Waiting */
+            if (!ListIsEmpty(NULL, &pMbox->waitingToSend)) {
+
+                /*** Error Check: Sent Message Size Exceeds Limit ***/
+                sentMsgSize = pMbox->waitingToSend.pHeadProc->zeroSlot->messageSize;
+                if (sentMsgSize > max_msg_size) {
+                    DebugConsole2("%s : Sent message size [%d] exceeds maximum receive size [%d] .\n",
+                                  __func__, sentMsgSize, max_msg_size);
+                    /* Remove Current Process from Active List */
+                    RemoveProcessLL(getpid(),
+                                    &pMbox->activeProcs);
+                    enableInterrupts();
+                    return -1;
+                }
+
+                /*** Retrieve Message ***/
+                /* copy message into buffer */
+                memcpy(msg, &pMbox->waitingToSend.pHeadProc->zeroSlot->message, sentMsgSize);
+
+                /*** Update Tables and Queues ***/
+                /* save index of pHead for InitializeSlot() */
+                int waitSlotIndex = pMbox->waitingToSend.pHeadProc->zeroSlot->slot_index;
+
+                /* Remove Slot from SlotTable */
+                InitializeSlot(EMPTY,
+                               waitSlotIndex,
+                               -1,
+                               NULL,
+                               -1,
+                               -1);
+
+                /* Decrement Global Counter */
+                totalActiveSlots--;
+
+                /** Unblock Waiting Process **/
+                /* Copy to Active List */
+                proc_ptr pWaitProc = CopyProcessLL(pMbox->waitingToSend.pHeadProc->pid,
+                                                   &pMbox->waitingToSend,
+                                                   &pMbox->activeProcs);
+
+                /* Update Delivered Flag */
+                //pWaitProc->zeroSlot = NULL;     //slot table msg removed  //todo delete?use?
+                pWaitProc->delivered = true;    //trigger delivered flag
+
+                /* Unblock Process */
+                unblock_proc(pWaitProc->pid);
+
+            } else {
+                DebugConsole2("%s: No process waiting to receive.",
+                              __func__);
+                /* Remove Current Process from Active List */
+                RemoveProcessLL(getpid(),
+                                &pMbox->activeProcs);
+                enableInterrupts();
+                return -3;
+            }
+
+            /** Error Check: Mailbox was Released **/
+            if (MboxWasReleased(pMbox)) {
+                enableInterrupts();
+                return -3;
+            }
+
+            /** Error Check: Process was Zapped while Blocked **/
+            if (is_zapped()) {
+                DebugConsole2("%s: Process was zapped while it was blocked.",
+                              __func__);
+                /* Remove Current Process from Active List */
+                RemoveProcessLL(getpid(),
+                                &pMbox->activeProcs);
+                enableInterrupts();
+                return -3;
+            }
+        }
+        /* If Current Process Message Delivered */
+        else{
+            /** Error Check: Sent Message Size Exceeds Limit **/
+            /* Find Process in Active Process List */
+            pCurProc = FindProcessLL(getpid(), &pMbox->activeProcs);
+            sentMsgSize = pCurProc->zeroSlot->messageSize;
             if (sentMsgSize > max_msg_size) {
                 DebugConsole2("%s : Sent message size [%d] exceeds maximum receive size [%d] .\n",
                               __func__, sentMsgSize, max_msg_size);
@@ -853,13 +957,13 @@ int HelperReceive(int mbox_id, void *msg, int max_msg_size, int block_flag)
                 return -1;
             }
 
-            /*** Retrieve Message ***/
-            /* copy message into buffer */
-            memcpy(msg, &pMbox->waitingToSend.pHeadProc->zeroSlot->message, sentMsgSize);
+            /** Copy Message into Buffer */
+            pCurProc = FindProcessLL(getpid(), &pMbox->activeProcs);    //update currentProc
+            memcpy(msg, &pCurProc->zeroSlot->message, sentMsgSize);
 
             /*** Update Tables and Queues ***/
             /* save index of pHead for InitializeSlot() */
-            int waitSlotIndex = pMbox->waitingToSend.pHeadProc->zeroSlot->slot_index;
+            int waitSlotIndex = pCurProc->zeroSlot->slot_index;
 
             /* Remove Slot from SlotTable */
             InitializeSlot(EMPTY,
@@ -871,46 +975,6 @@ int HelperReceive(int mbox_id, void *msg, int max_msg_size, int block_flag)
 
             /* Decrement Global Counter */
             totalActiveSlots--;
-
-            /*** Unblock Waiting Process ***/
-            /* Add Blocked Process to Active List */
-            AddProcessLL(pMbox->waitingToSend.pHeadProc->pid,
-                         &pMbox->activeProcs,
-                         &pMbox->waitingToSend.pHeadProc->zeroSlot->message,
-                         true);
-
-            /* Remove Blocked Process from Waiting List */
-            int pid = RemoveProcessLL(pMbox->waitingToSend.pHeadProc->pid,
-                                      &pMbox->waitingToSend);    //remove from list
-
-            /* Unblock Process */
-            unblock_proc(pid);
-        }
-        else{
-            DebugConsole2("%s: No process waiting to receive.",
-                          __func__);
-            /* Remove Current Process from Active List */
-            RemoveProcessLL(getpid(),
-                            &pMbox->activeProcs);
-            enableInterrupts();
-            return -3;
-        }
-
-        /** Error Check: Mailbox was Released **/
-        if(MboxWasReleased(pMbox)){
-            enableInterrupts();
-            return -3;
-        }
-
-        /** Error Check: Process was Zapped while Blocked **/
-        if(is_zapped()){
-            DebugConsole2("%s: Process was zapped while it was blocked.",
-                          __func__);
-            /* Remove Current Process from Active List */
-            RemoveProcessLL(getpid(),
-                            &pMbox->activeProcs);
-            enableInterrupts();
-            return -3;
         }
 
         /** Function Termination **/
@@ -920,22 +984,26 @@ int HelperReceive(int mbox_id, void *msg, int max_msg_size, int block_flag)
         enableInterrupts();     // Enable interrupts
         return sentMsgSize;     // Zero-Slot Message Recvd Successfully
     }
+//todo ?? need?
+//        /* Not Zero Slot */
+//    else{
+//        pCurProc->zeroSlot = NULL;
+//    }
+
+    /* Update Current Pointer */
+    pCurProc = FindProcessLL(getpid(), &pMbox->activeProcs);
 
     /*** Verify Message is Available ***/
     /* mboxReceive: no message available */
     if (block_flag == 0 && pMbox->activeSlots <= 0) {
 
-        /* Add Current Process to Waiting List */
-        AddProcessLL(getpid(),
-                     &pMbox->waitingToReceive,
-                     NULL,
-                     NULL);
+        /** Block Current Process **/
+        /* Copy Process to Wait List */
+        CopyProcessLL(getpid(),
+                      &pMbox->activeProcs,
+                      &pMbox->waitingToReceive);
 
-        /* Remove Current Process from Active List */
-        RemoveProcessLL(getpid(),
-                        &pMbox->activeProcs);
-
-        /* Block Sending Process */
+        /* Block Receiving Process */
         block_me(RECEIVE_BLOCK);
 
         /** Error Check: Mailbox was Released **/
@@ -968,9 +1036,23 @@ int HelperReceive(int mbox_id, void *msg, int max_msg_size, int block_flag)
             return -2;
     }
 
+    /*** Update Current Proccess Pointer After Block ***/
+    pCurProc = FindProcessLL(getpid(), &pMbox->activeProcs);   //update current pointer
+
+    /*** Check if Message already Received ***/
+    /* If Message is Not Already Received */
+    if(pCurProc->slot_id == -1){
+        /* Set pSLot to Head of Slot Queue */
+        pSlot = pMbox->slotQueue.pHeadSlot;
+    }
+    /* If Message is Already Received */
+    else{
+        /* Set pSLot from Slot Index */
+        pSlot = FindSlotLL(pCurProc->slot_id, &pMbox->slotQueue);
+    }
 
     /*** Error Check: Sent Message Size Exceeds Limit ***/
-    sentMsgSize = pMbox->slotQueue.pHeadSlot->slot->messageSize;
+    sentMsgSize = pSlot->slot->messageSize;
     if (sentMsgSize > max_msg_size) {
         DebugConsole2("%s : Sent message size [%d] exceeds maximum receive size [%d] .\n",
                       __func__, sentMsgSize, max_msg_size);
@@ -983,14 +1065,14 @@ int HelperReceive(int mbox_id, void *msg, int max_msg_size, int block_flag)
 
     /*** Retrieve Message ***/
     /* copy message into buffer */
-    memcpy(msg, &pMbox->slotQueue.pHeadSlot->slot->message, sentMsgSize);
+    memcpy(msg, &pSlot->slot->message, sentMsgSize);
 
     /*** Update Tables and Queues ***/
     /* save index of pHead for InitializeSlot() */
-    int slotIndex = pMbox->slotQueue.pHeadSlot->slot->slot_index;
+    int slotIndex = pSlot->slot->slot_index;
 
     /* Remove Slot from Queue */
-    if((RemoveSlotLL(&pMbox->slotQueue, pMbox)) == -1){
+    if((RemoveSlotLL(pSlot->slot_id, &pMbox->slotQueue)) == -1){
         DebugConsole2("%s: Unable to receive message - mailbox empty. Halting...",
                       __func__);
         /* Remove Current Process from Active List */
@@ -1013,8 +1095,11 @@ int HelperReceive(int mbox_id, void *msg, int max_msg_size, int block_flag)
     /*** Unblock Waiting Processes ***/
     if(!ListIsEmpty(NULL, &pMbox->waitingToSend)){
 
-        /*** Add Slot pointer in Mailbox Queue ***/
-        if((AddSlotLL(pMbox->waitingToSend.pHeadProc->zeroSlot, pMbox)) == -1){
+        /*** Add Sender Slot pointer to Mailbox Queue ***/
+        int sendSlotIndex = GetSlotIndex(pMbox->waitingToSend.pHeadProc->slot_id);    //find index
+        slot_table * pSendSlot = &SlotTable[sendSlotIndex];      //set pointer to slot
+
+        if((AddSlotLL(pSendSlot, pMbox)) == -1){
             DebugConsole2("%s: Slot Queue is full.\n", __func__);
             /* Remove Current Process from Active List */
             RemoveProcessLL(getpid(),
@@ -1025,18 +1110,19 @@ int HelperReceive(int mbox_id, void *msg, int max_msg_size, int block_flag)
         /* Increment Global Counter */
         totalActiveSlots++;
 
-        /* Add Blocked Process to Active List */
-        AddProcessLL(pMbox->waitingToSend.pHeadProc->pid,
-                     &pMbox->activeProcs,
-                     NULL,
-                     NULL);
 
-        /* Remove Blocked Process from Waiting List */
-        int pid = RemoveProcessLL(pMbox->waitingToSend.pHeadProc->pid,
-                                  &pMbox->waitingToSend);
+        /** Unblock Waiting Process **/
+        /* Copy to Active List */
+        proc_ptr pWaitProc = CopyProcessLL(pMbox->waitingToSend.pHeadProc->pid,
+                                           &pMbox->waitingToSend,
+                                           &pMbox->activeProcs);
+
+        /* Update Delivered Flag */
+        pWaitProc->delivered = true;    //trigger delivered flag
 
         /* Unblock Process */
-        unblock_proc(pid);
+        unblock_proc(pWaitProc->pid);
+
     }
 
     /*** Function Termination ***/
@@ -1187,16 +1273,24 @@ void InitializeMailbox(int newStatus, int mbox_index, int mbox_id, int maxSlots,
 
     mailbox * pMbox = &MailboxTable[mbox_index];
 
-    pMbox->mbox_index = mbox_index;               //Mailbox Slot
-    pMbox->mbox_id = mbox_id;                     //Mailbox ID
-    pMbox->status = newStatus;                    //Mailbox Status
-    InitializeList(NULL, &pMbox->activeProcs);   //Waiting Process List
-    InitializeList(NULL, &pMbox->waitingToSend);  //Waiting to Send List
-    InitializeList(NULL, &pMbox->waitingToReceive);//Waiting to Receive List
-    pMbox->maxSlots = maxSlots;                   //Max Slots
-    pMbox->activeSlots = 0;                       //Active Slots
-    pMbox->maxMsgSize = maxMsgSize;               //Slot Size
-    InitializeList(&pMbox->slotQueue, NULL);      //Slot List
+    pMbox->mbox_index = mbox_index;             //Mailbox Slot
+    pMbox->mbox_id = mbox_id;                   //Mailbox ID
+    pMbox->status = newStatus;                  //Mailbox Status
+    InitializeList(NULL,
+                   &pMbox->activeProcs);        //Waiting Process List
+    InitializeList(NULL,
+                   &pMbox->waitingToSend);      //Waiting to Send List
+    InitializeList(NULL,
+                   &pMbox->waitingToReceive);   //Waiting to Receive List
+    pMbox->activeProcs.mbox_id = mbox_id;       //MailboxID inside Active Queue
+    pMbox->waitingToSend.mbox_id = mbox_id;     //MailboxID inside Send Queue
+    pMbox->waitingToReceive.mbox_id = mbox_id;  //MailboxID inside Receive Queue
+    pMbox->maxSlots = maxSlots;                 //Max Slots
+    pMbox->activeSlots = 0;                     //Active Slots
+    pMbox->maxMsgSize = maxMsgSize;             //Slot Size
+    InitializeList(&pMbox->slotQueue,
+                   NULL);                 //Slot List
+   pMbox->slotQueue.mbox_id = mbox_id;          //MailboxID inside Slot Queue
 }
 /* ------------------------------------------------------------------------
    Name -           GetMboxIndex
@@ -1268,15 +1362,23 @@ void InitializeSlot(int newStatus, int slot_index, int slot_id, void *msg_ptr, i
     pSlot->mbox_id = mbox_id;           //Mailbox ID of Created Mailbox     //todo delete?
     pSlot->messageSize = msgSize;       //Size of contained message
 
+
     /*Adding a Message*/
     if(newStatus != EMPTY){
-        memcpy(pSlot->message, msg_ptr, msgSize);
+        if((mbox_id >= 1) && (mbox_id <= 6)) {
+            memcpy(pSlot->message, &msg_ptr, msgSize);
+        }
+        else {
+            memcpy(pSlot->message, msg_ptr, msgSize);
+        }
     }
     /*Removing a Message*/
     else{
         memset(pSlot->message, '\0', sizeof(pSlot->message));
     }
+
 }
+
 
 
 /* ------------------------------------------------------------------------
@@ -1301,7 +1403,7 @@ int GetSlotIndex(int slot_id){
     Purpose -       Initialize List pointed to by parameter
     Parameters -    Meant to be used as 'either or', use NULL for other
                     *pSlot: Pointer to Message Slot List
-                    *pProc: Pointer to Process List
+                    *pCurProc: Pointer to Process List
     Returns -       None, halt(1) on error
     Side Effects -  None
    ----------------------------------------------------------------------- */
@@ -1334,11 +1436,11 @@ void InitializeList(slotQueue *pSlot, procQueue *pProc)
 /* ------------------------------------------------------------------------
     Name -          ListIsFull
     Purpose -       Checks if Slot List OR Proc List is Full
-    Parameters -    Meant to be used as (pSlot & pMbox) or (pProc)
+    Parameters -    Meant to be used as (pSlot & pMbox) or (pCurProc)
                     *pSlot: Pointer to Message Slot List
                     *pMbox: Pointer to Mailbox
                     * * * OR * * *
-                    *pProc: Pointer to Process List
+                    *pCurProc: Pointer to Process List
     Returns -        0: not full
                      1: full
                     -1: list not found
@@ -1371,7 +1473,7 @@ bool ListIsFull(const slotQueue *pSlot, const mailbox *pMbox, const procQueue *p
     Purpose -       Checks if Slot List OR Proc List is Empty
     Parameters -    Meant to be used as 'either or', use NULL for other
                     *pSlot: Pointer to Message Slot List
-                    *pProc: Pointer to Process List
+                    *pCurProc: Pointer to Process List
     Returns -        0: not Empty
                      1: Empty
                     -1: list not found
@@ -1436,7 +1538,7 @@ int AddSlotLL(slot_table * pSlot, mailbox * pMbox){
 
     /* Point pList to pSlot */
     pList->slot = pSlot;
-
+    pList->slot_id = pSlot->slot_id;
 
     /*** Add pList to Mailbox Queue and Update Links ***/
     pList->pNextSlot = NULL;                //Add pList to slotQueue
@@ -1462,59 +1564,165 @@ int AddSlotLL(slot_table * pSlot, mailbox * pMbox){
 /* ------------------------------------------------------------------------
     Name -          RemoveSlotLL
     Purpose -       Remove Slot from Specific Mailbox
-    Parameters -    pSlotQ:  Pointer to Queue to remove Slot from
-    Returns -       None
+    Parameters -    slot_id:    Slot ID
+                    pMbox:      Mailbox to Remove From
+    Returns -       slot_id of removed slot
     Side Effects -  None
    ----------------------------------------------------------------------- */
-int RemoveSlotLL(slotQueue * pSlot, mailbox * pMbox){
+int RemoveSlotLL(int slot_id, slotQueue * sq){
 
     /*** Function Initialization ***/
     SlotList * pSave;           //New node to save position
-    pSave = pSlot->pHeadSlot;   //Save slot pointer to list head
+    int idFlag = 0;             //verify id found in list
+    int remFlag = 0;            //verify slot removed successfully
 
-
-    /*** Error Check: Verify Messages in List ***/
-    if(pSave == NULL){  //Check that pSave returned process
-        DebugConsole2("%s: Attempting to Remove Slot from Empty List\n", __func__);
-        return -1;
+    /*** Error Check: List is Empty ***/
+    if(ListIsEmpty(sq, NULL)){
+        DebugConsole2("%s: Queue is empty.\n", __func__);
+        halt(1);
     }
 
+    /*** Find PID and Remove from List ***/
+    pSave = sq->pHeadSlot;          //Set pSave to head of list
 
-    /*** Remove Slot and Update Linkers ***/
-    pSlot->pHeadSlot = pSave->pNextSlot;    //increment head to next slot
-    pSave->pNextSlot = NULL;                //set old head->next to NULL
+    while(pSave != NULL) {        //verify not end of list
+        if(pSave->slot_id == slot_id){  //if found slot_id to remove...
+            idFlag = 1;                 //Trigger Flag - PID found
 
-    if(pSlot->pHeadSlot != NULL){           //if NOT only node in Queue
-        pSlot->pHeadSlot->pPrevSlot = NULL; //set new head->prev to NULL
+            /** If pid to be removed is at head **/
+            if(pSave == sq->pHeadSlot){
+                sq->pHeadSlot = pSave->pNextSlot;           //Set next pid as head
+                pSave->pNextSlot = NULL;                    //Set old head next pointer to NULL
+
+                /* if proc is NOT only node on list */
+                if(sq->pHeadSlot != NULL) {
+                    sq->pHeadSlot->pPrevSlot = NULL;        //Set new head prev pointer to NULL
+                }
+
+                    /* if proc IS only node on list */
+                else{
+                    pSave->pPrevSlot = NULL;    //Set old prev pointer to NULL
+                    sq->pTailSlot = NULL;       //Set new tail to NULL
+
+                }
+
+                remFlag = 1;                    //Trigger Flag - Process Removed
+                break;
+            }
+
+                /** If pid to be removed is at tail **/
+            else if(pSave == sq->pTailSlot){
+                sq->pTailSlot = pSave->pPrevSlot;       //Set prev pid as tail
+                pSave->pPrevSlot = NULL;                //Set old tail prev pointer to NULL
+                sq->pTailSlot->pNextSlot = NULL;        //Set new tail next pointer to NULL
+                remFlag = 1;                            //Trigger Flag - Process Removed
+                break;
+            }
+
+                /** If pid to be removed is in middle **/
+            else{
+                pSave->pPrevSlot->pNextSlot = pSave->pNextSlot; //Set pSave prev next to pSave next
+                pSave->pNextSlot->pPrevSlot = pSave->pPrevSlot; //Set pSave next prev to pSave prev
+                pSave->pNextSlot = NULL;    //Set old pNext to NULL
+                pSave->pPrevSlot = NULL;    //Set old pPrev to NULL
+                remFlag = 1;                //Trigger Flag - Process Removed
+                break;
+            }
+        }
+        else{                           //if pid not found
+            pSave = pSave->pNextSlot;   //increment to next in list
+        }
+    }//end while
+
+    /*** Decrement Counter ***/
+    sq->total--;
+
+    /*** Error Check: Pid Found and Removed ***/
+    if(idFlag && remFlag){
+        pSave = NULL;       //free() causing issues in USLOSS
+
     }
-    else{                                   //if only node in Queue
-        pSave->pPrevSlot = NULL;            //clear linkers
-        pSlot->pTailSlot = NULL;
+    else {
+        if (idFlag == 0){
+            DebugConsole2("%s: Unable to locate pid [%d]. Halting...\n",
+                          __func__, slot_id);
+            halt(1);
+        }
+        else if (remFlag == 0) {
+            DebugConsole2("%s: Removal of pid [%d] unsuccessful. Halting...\n",
+                          __func__, remFlag);
+            halt(1);
+        }
     }
-
 
     /*** Decrement Counters ***/
+    int mboxIndex = GetMboxIndex(sq->mbox_id);  //get mailbox Index
+    mailbox *pMbox = &MailboxTable[mboxIndex];          // Create Mailbox pointer
     pMbox->activeSlots--;
     pMbox->slotQueue.total--;
 
-    return 0;
+    /*** Function Termination ***/
+    return slot_id;     //process removal success
+
 }/* RemoveSlotLL */
+
+/* ------------------------------------------------------------------------
+    Name -          FindSlotLL
+    Purpose -       Finds Slot inside Specified Slot Queue
+    Parameters -    slot_id:    Slot ID
+                    sq:         Pointer to Slot Queue
+    Returns -       Pointer to found Slot
+    Side Effects -  None
+   ----------------------------------------------------------------------- */
+slot_ptr FindSlotLL(int slot_id, slotQueue * sq){
+
+    /*** Function Initialization ***/
+    SlotList * pSave;   //Pointer for Linked List
+    int idFlag = 0;     //verify id found in list
+
+    /*** Error Check: List is Empty ***/
+    if(ListIsEmpty(sq, NULL)){
+        DebugConsole2("%s: Queue is empty.\n", __func__);
+        return NULL;
+    }
+
+
+    /*** Find PID ***/
+    pSave = sq->pHeadSlot;              //Set pSave to head of list
+
+    while(pSave != NULL) {        //verify not end of list
+        if(pSave->slot_id == slot_id){  //if found id...
+
+            /*** Function Termination ***/
+            return pSave;               //slot found
+
+        }
+        else{                           //if pid not found
+            pSave = pSave->pNextSlot;   //increment to next in list
+        }
+    }//end while
+
+
+    /*** Function Termination ***/
+    return NULL;     //process not found
+
+}/* FindSlotLL */
 
 /* ------------------------------------------------------------------------
     Name -          AddProcessLL
     Purpose -       Add Process to Specified Process Queue
-    Parameters -    pid:    Process ID
-                    pq:     Pointer to Process Queue
-                    ~ Zero Slot Use Only ~
-                    zeroSlot:       points to Slot Table
-                    zeroDelivered:  indicates if zero message delivered
+    Parameters -    pid:        Process ID
+                    pq:         Pointer to Process Queue
+                    delivered:  indicates if zero message delivered
+                    slot_id:    Regular - holds slot queue id
+                    zeroSlot:   Zero Slot - points to Slot Table
     Returns -       None, halt (1) on error
     Side Effects -  None
    ----------------------------------------------------------------------- */
-void AddProcessLL(int pid, procQueue * pq, slot_ptr zeroSlot, bool zeroDelivered){
+void AddProcessLL(int pid, procQueue * pq){
 
     /*** Function Initialization ***/
-    mailbox * pMbox = GetMboxIndex(pq->mbox_id);
+    mailbox * pMbox = GetMboxIndex(pq->mbox_id);//todo DELETE LINE
     ProcList * pNew;    //New Node
 
 
@@ -1539,12 +1747,6 @@ void AddProcessLL(int pid, procQueue * pq, slot_ptr zeroSlot, bool zeroDelivered
     /*** Update Node Values ***/
     /* Pid Value */
     pNew->pid = pid;
-
-    /* SlotTable Pointer */
-    if(zeroSlot){
-        pNew->zeroSlot = zeroSlot;
-        pNew->zeroDelivered = zeroDelivered;
-    }
 
     /*** Add New Node to List ***/
     pNew->pNextProc = NULL;                     //assign pNext to NULL
@@ -1586,11 +1788,10 @@ int RemoveProcessLL(int pid, procQueue * pq){
         halt(1);
     }
 
-
     /*** Find PID and Remove from List ***/
     pSave = pq->pHeadProc;          //Set pSave to head of list
 
-    while(pSave->pid != 0) {        //verify not end of list    //todo: does 0 work? x>0?
+    while(pSave != NULL) {        //verify not end of list    //todo: does 0 work? x>0?
         if(pSave->pid == pid){      //if found pid to remove...
             pidFlag = 1;            //Trigger Flag - PID found
 
@@ -1615,7 +1816,7 @@ int RemoveProcessLL(int pid, procQueue * pq){
                 break;
             }
 
-            /** If pid to be removed is at tail **/
+                /** If pid to be removed is at tail **/
             else if(pSave == pq->pTailProc){
                 pq->pTailProc = pSave->pPrevProc;       //Set prev pid as tail
                 pSave->pPrevProc = NULL;                //Set old tail prev pointer to NULL
@@ -1624,7 +1825,7 @@ int RemoveProcessLL(int pid, procQueue * pq){
                 break;
             }
 
-            /** If pid to be removed is in middle **/
+                /** If pid to be removed is in middle **/
             else{
                 pSave->pPrevProc->pNextProc = pSave->pNextProc; //Set pSave prev next to pSave next
                 pSave->pNextProc->pPrevProc = pSave->pPrevProc; //Set pSave next prev to pSave prev
@@ -1637,7 +1838,7 @@ int RemoveProcessLL(int pid, procQueue * pq){
         else{                           //if pid not found
             pSave = pSave->pNextProc;   //increment to next in list
         }
-    }//end while
+    }//end while loop
 
     /*** Decrement Counter ***/
     pq->total--;
@@ -1665,8 +1866,49 @@ int RemoveProcessLL(int pid, procQueue * pq){
 
 }/* RemoveProcessLL */
 
+/* ------------------------------------------------------------------------
+    Name -          CopyProcessLL
+    Purpose -       Copies process from sourceQueue to destQueue
+    Parameters -    pid:            Process ID
+                    sourceQueue:    Pointer to Source Process Queue
+                    destQueue:      Pointer to Destination Process Queue
+    Returns -       pointer to copied process in destination
+    Side Effects -  None
+   ----------------------------------------------------------------------- */
+proc_ptr CopyProcessLL(int pid, procQueue * sourceQueue, procQueue * destQueue){
 
+    /*** Function Initialization ***/
+    proc_ptr pSrcProc;      // Pointer to Proc in Source Queue
+    proc_ptr pDstProc;      // Pointer to Proc in Dest Queue
 
+    /*** Add Process to Destination ***/
+    AddProcessLL(pid, destQueue);
+
+    /*** Update Values ***/
+    /* Find Process in Source Queue */
+    pSrcProc = FindProcessLL(pid, sourceQueue);
+
+    /* Find Process in Destination Queue */
+    pDstProc = FindProcessLL(pid, destQueue);
+
+    /* Compare Values and Update on Mismatch */
+    if (pDstProc->zeroSlot != pSrcProc->zeroSlot){
+        pDstProc->zeroSlot = pSrcProc->zeroSlot;
+    }
+    if(pDstProc->delivered != pSrcProc->delivered){
+        pDstProc->delivered = pSrcProc->delivered;
+    }
+    if(pDstProc->slot_id != pSrcProc->slot_id){
+        pDstProc->slot_id = pSrcProc->slot_id;
+    }
+
+    /*** Remove Process from Destination ***/
+    RemoveProcessLL(pSrcProc->pid, sourceQueue);
+
+    /*** Function Termination ***/
+    return pDstProc;     //process copy success
+
+} /* CopyProcessLL */
 /* ------------------------------------------------------------------------
     Name -          FindProcessLL
     Purpose -       Finds Process inside Specified Process Queue
@@ -1708,7 +1950,7 @@ proc_ptr FindProcessLL(int pid, procQueue * pq){
     /*** Function Termination ***/
     return NULL;     //process not found
 
-}/* RemoveProcessLL */
+}/* FindProcessLL */
 
 
 /* * * * * * * * * * * * END OF Linked List Functions * * * * * * * * * * * */
@@ -1737,18 +1979,16 @@ void HelperRelease(mailbox *pMbox) {
         DebugConsole2("%s: Unblocking RECEIVE_BLOCK",
                       __func__);
 
-        /* Add Blocked Process to Active List */
-        AddProcessLL(pMbox->waitingToReceive.pHeadProc->pid,
-                     &pMbox->activeProcs,
-                     NULL,
-                     NULL);
 
-        /* Remove Blocked Process from Waiting List */
-        int pid = RemoveProcessLL(pMbox->waitingToReceive.pHeadProc->pid,
-                                  &pMbox->waitingToReceive);
+        /** Unblock Waiting Process **/
+        /* Copy to Active List */
+        proc_ptr pRecvProc = CopyProcessLL(pMbox->waitingToReceive.pHeadProc->pid,
+                                           &pMbox->waitingToReceive,
+                                           &pMbox->activeProcs);
 
         /* Unblock Process */
-        unblock_proc(pid);
+        unblock_proc(pRecvProc->pid);
+
         disableInterrupts();
     }
 
@@ -1758,17 +1998,15 @@ void HelperRelease(mailbox *pMbox) {
         DebugConsole2("%s: Unblocking SEND_BLOCK",
                       __func__);
 
-        /* Add Blocked Process to Active List */
-        AddProcessLL(pMbox->waitingToSend.pHeadProc->pid,
-                     &pMbox->activeProcs,
-                     NULL,
-                     NULL);
+        /** Unblock Waiting Process **/
+        /* Copy to Active List */
+        proc_ptr pSendProc = CopyProcessLL(pMbox->waitingToSend.pHeadProc->pid,
+                                           &pMbox->waitingToSend,
+                                           &pMbox->activeProcs);
 
-        /* Remove Blocked Process from Waiting List */
-        int pid = RemoveProcessLL(pMbox->waitingToSend.pHeadProc->pid,
-                                  &pMbox->waitingToSend);
         /* Unblock Process */
-        unblock_proc(pid);
+        unblock_proc(pSendProc->pid);
+
         disableInterrupts();
     }
 

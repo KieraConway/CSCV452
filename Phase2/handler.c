@@ -117,6 +117,8 @@ void term_handler(int dev, void *unit)
     int result;
     int lunit = (int)unit;
 
+    console("%s: started, dev = %d, unit = %d\n", __func__, dev, lunit);
+
     DebugConsole2("%s: handler called\n", __func__);
 
     /* Check for kernel mode */
@@ -131,14 +133,13 @@ void term_handler(int dev, void *unit)
         halt(1);
     }
 
-    if ((lunit > 4) || (lunit < 1)) {
+    if ((lunit > 3) || (lunit < 0)) {
         DebugConsole2("%s: Unit value invalid. Halting.\n", __func__);
         halt(1);
     }
 
     device_input(TERM_DEV, unit, &status);
 
-    // assuming lunit is 1, 2, 3 or 4
     result = MboxCondSend(io_mbox[3 + lunit],
                           status,
                           sizeof(int));
@@ -174,7 +175,8 @@ void syscall_handler(int dev, void *unit)
 
     /* check what system: if the call is not in the range between 0 and MAXSYSCALLS, , halt(1) */
     if ((sys_ptr->number < 0) || (sys_ptr->number >= MAXSYSCALLS)) {
-        nullsys(sys_ptr);
+        console("syscall_handler: sys number %d is wrong.  Halting...\n", sys_ptr->number);
+        halt(1);
     }
 
     /* Now it is time to call the appropriate system call handler */

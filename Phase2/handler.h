@@ -2,6 +2,7 @@
 #define PHASE_2_HANDLER_H
 
 #include <stdio.h>
+#include <usloss.h>
 #include <phase1.h>
 #include <phase2.h>
 #include "message.h"
@@ -15,7 +16,7 @@ extern int debugFlag2;
 
 /* an error method to handle invalid syscalls */
 void nullsys(sysargs *args);
-void clock_handler(int dev, void *unit);
+void clock_handler2(int dev, void *unit);
 void disk_handler(int dev, void *unit);
 void term_handler(int dev, void *unit);
 
