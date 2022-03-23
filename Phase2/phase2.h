@@ -10,7 +10,7 @@
  */
 #define MAXLINE         80
 #define MAXMBOX         2000 /* 2000 */      //maximum number of mailboxes.//TODO CHANGE BACK
-#define MAXSLOTS        2500 /* 2500 */     //number of usable mailbox slots
+#define MAXSLOTS        2500      /* 2500 */     //number of usable mailbox slots
 #define MAXMESSAGE      150  /* largest possible message in a single slot (bytes)*/
 
 /* returns id of mailbox, or -1 if no more mailboxes, -2 if invalid args */
@@ -47,7 +47,7 @@ typedef struct sysargs
         void *arg5;
 } sysargs;
 
-extern void             (*sys_vec[MAXSYSCALLS])(sysargs *args);
+//extern void             (*sys_vec[MAXSYSCALLS])(sysargs *args);
 extern void             (*sys_vec[])(sysargs *args);
 
 #endif

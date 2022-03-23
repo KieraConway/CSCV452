@@ -23,20 +23,21 @@
 
 /* ------------------------ Typedefs and Structs ------------------------ */
 typedef struct procQueue procQueue;
-typedef struct slotQueue slotQueue;
-
-typedef struct slot_table slot_table;
-typedef struct mailbox mailbox;
-
 typedef struct procList * proc_ptr;
-typedef struct slot_table * slot_ptr;
 
+typedef struct slot_table * table_ptr;
+typedef struct slot_table slot_table;
+typedef struct slotQueue slotQueue;
+typedef struct slotList * slot_ptr;
+
+typedef struct mailbox mailbox;
 
 /* Structures for Mailbox Slot Lists */
 typedef struct  slotList{
-    slot_ptr slot;
-    struct  slotList *pNextSlot;    //points to next process
-    struct  slotList *pPrevSlot;    //points to previous process
+    table_ptr       slot;
+    int             slot_id;       //unique slot id
+    struct slotList *pNextSlot;    //points to next process
+    struct slotList *pPrevSlot;    //points to previous process
 } SlotList;
 
 typedef struct slotQueue{
@@ -60,8 +61,9 @@ struct slot_table {
 /* Structures for Processes */
 typedef struct  procList{
     int         pid;                //process pid
-    slot_ptr    zeroSlot;           //msg index in SlotTable for zero slots
-    bool        zeroDelivered;      //indicates if zero-slot message delivered
+    table_ptr   zeroSlot;           //points to SlotTable for zero slots
+    int         slot_id;            //unique slot queue id that holds msg
+    bool        delivered;          //indicates if zero-slot message delivered
     struct procList *pNextProc;     //points to next process
     struct procList *pPrevProc;     //points to previous process
 } ProcList;
