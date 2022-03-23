@@ -103,7 +103,7 @@ proc_ptr FindProcessLL(int pid, procQueue * pq);//Finds Process in Process Queue
 /* -------------------------- Globals ------------------------------------- */
 
 /*Flags*/
-int debugFlag2 = 0;                 //used for debugging
+int debugFlag = 0;                 //used for debugging
 int releaseWasBlocked = 0;
 
 /*Mailbox Globals*/
@@ -137,7 +137,7 @@ int start1(char *arg)
 {
     int kid_pid, status;
 
-    DebugConsole2("%s: at beginning\n", __func__);
+    DebugConsole2("%s: at beginning\n", __func__ );
 
     /* Check for kernel mode */
     check_kernel_mode("start1");
@@ -172,14 +172,14 @@ int start1(char *arg)
     /* Enable interrupts */
     enableInterrupts();
 
-    DebugConsole2("%s: fork'ing start2 process\n", __func__);
+    DebugConsole2("%s: fork'ing start2 process\n", __func__ );
 
     /*Create Process for start2*/
     kid_pid = fork1("start2", start2, NULL, 4 * USLOSS_MIN_STACK, 1);
 
     /*Join until Start2 quits*/
     if ( join(&status) != kid_pid ) {
-        DebugConsole2("%s: join something other than start2's pid\n", __func__);
+        DebugConsole2("%s: join something other than start2's pid\n", __func__ );
         halt(1);
     }
 
@@ -504,7 +504,7 @@ int HelperSend(int mbox_id, void *msg, int msg_size, int block_flag)
 
     /*** Error Check: Invalid Parameters ***/
     /* Check mbox_id is Valid */
-    if(mbox_id < 0 || pMbox->mbox_id != mbox_id){
+    if(mbox_id < 0 || pMbox->mbox_id != mbox_id || pMbox->status == MBOX_RELEASED){
         DebugConsole2("%s : Invalid Mailbox ID [%d].\n",
                       __func__, mbox_id);
         enableInterrupts();
@@ -529,6 +529,20 @@ int HelperSend(int mbox_id, void *msg, int msg_size, int block_flag)
         enableInterrupts();
         return -1;
     }
+//TODO: DELETE
+//
+//    /*** Error Check: Mailbox was Released ***/
+//    if(pMbox->status == MBOX_RELEASED){
+//        /* If Current Process */
+//        if(FindProcessLL(getpid(), &pMbox->activeProcs)){
+//            MboxWasReleased(pMbox);
+//            return -3;
+//        }
+//        /* If New Process */
+//        else{
+//            return -1;
+//        }
+//    }
 
     /*** Add to Slot Table ***/
     /* determine pSlot location **/
@@ -792,7 +806,7 @@ int HelperReceive(int mbox_id, void *msg, int max_msg_size, int block_flag)
 
     /*** Error Check: Invalid Parameters ***/
     /* Check mbox_id is Valid */
-    if(mbox_id < 0 || pMbox->mbox_id != mbox_id){
+    if(mbox_id < 0 || pMbox->mbox_id != mbox_id || pMbox->status == MBOX_RELEASED){
         DebugConsole2("%s : Invalid Mailbox ID [%d].\n",
                       __func__, mbox_id);
         enableInterrupts();
@@ -807,11 +821,28 @@ int HelperReceive(int mbox_id, void *msg, int max_msg_size, int block_flag)
         return -1;
     }
 
-    /*** Error Check: Mailbox was Released ***/ //todo: do we need this here?
-    if (MboxWasReleased(pMbox)) {
+    /*** Error Check: Mailbox was Released ***/
+    if(pMbox->status == MBOX_RELEASED){
+        DebugConsole2("%s : Invalid Mailbox,.\n",
+                      __func__, max_msg_size);
         enableInterrupts();
-        return -3;
+        return -1;
     }
+//todo: DELETE
+//
+//    /*** Error Check: Mailbox was Released ***/
+//    if(pMbox->status == MBOX_RELEASED){
+//        /* If Current Process */
+//        if(FindProcessLL(getpid(), &pMbox->activeProcs)){
+//            MboxWasReleased(pMbox);
+//            return -3;
+//        }
+//        /* If New Process */
+//        else{
+//            return -1;
+//        }
+//    }
+
 
     /*** Update Process ***/
     /* Add Process to Active Procs **/
@@ -1217,11 +1248,12 @@ void check_kernel_mode(const char *functionName)
    ----------------------------------------------------------------------- */
 void DebugConsole2(char *format, ...)
 {
-    if (DEBUG2 && debugFlag2)
+    if (DEBUG2 && debugFlag)
     {
         va_list argptr;
         va_start(argptr, format);
-        console(format, argptr);
+        vfprintf(stdout, format, argptr);
+        fflush(stdout);
         va_end(argptr);
     }
 }
@@ -1976,7 +2008,7 @@ void HelperRelease(mailbox *pMbox) {
 
     /*** Unblock Receiving Processes ***/
     while (pMbox->waitingToReceive.total > 0) {
-        DebugConsole2("%s: Unblocking RECEIVE_BLOCK",
+        DebugConsole2("%s: Unblocking RECEIVE_BLOCK\n",
                       __func__);
 
 

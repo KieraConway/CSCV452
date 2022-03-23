@@ -117,7 +117,7 @@ void term_handler(int dev, void *unit)
     int result;
     int lunit = (int)unit;
 
-    console("%s: started, dev = %d, unit = %d\n", __func__, dev, lunit);
+    DebugConsole2("%s: started, dev = %d, unit = %d\n", __func__, dev, lunit);
 
     DebugConsole2("%s: handler called\n", __func__);
 
@@ -175,7 +175,7 @@ void syscall_handler(int dev, void *unit)
 
     /* check what system: if the call is not in the range between 0 and MAXSYSCALLS, , halt(1) */
     if ((sys_ptr->number < 0) || (sys_ptr->number >= MAXSYSCALLS)) {
-        console("syscall_handler: sys number %d is wrong.  Halting...\n", sys_ptr->number);
+        console("%s: sys number %d is wrong.  Halting...\n", __func__, sys_ptr->number);
         halt(1);
     }
 
