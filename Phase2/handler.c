@@ -15,23 +15,22 @@ extern int io_mbox[7];
 
 static int interrupt_count = 1;
 
-
 /* an error method to handle invalid syscalls */
 void nullsys(sysargs *args)
 {
     console("nullsys(): Invalid syscall %d. Halting...\n", args->number);
     halt(1);
+
 } /* nullsys */
 
 
+/* Does Clock Handling */
 void clock_handler2(int dev, void *unit)
 {
     int msg = 0;
     int *msgptr = &msg;
     int result;
     int lunit = (int)unit;
-
-    DebugConsole2("%s: handler called\n", __func__);
 
     /* Check for kernel mode */
     check_kernel_mode(__func__);
@@ -40,27 +39,53 @@ void clock_handler2(int dev, void *unit)
     disableInterrupts();
 
     /* Invalid argument checks */
-    if (dev != CLOCK_DEV) {
+    if (dev != CLOCK_DEV)
+    {
         DebugConsole2("%s: handler called. Halting.\n", __func__);
         halt(1);
     }
 
-    if (lunit != 0) {
+    if (lunit != 0)
+    {
         DebugConsole2("%s: Unit value invalid. Halting.\n", __func__);
         halt(1);
     }
 
     /* Time Slice 80 ms */
-    if (interrupt_count == 4) {
+    if (interrupt_count == 4)
+    {
         time_slice();
     }
 
     /* Send a message every 5 interrupts */
-    if (interrupt_count == 5) {
+    if (interrupt_count == 5)
+    {
         int status;
         result = MboxCondSend(io_mbox[0], msgptr, sizeof(int));
 
-        // todo checks go here for result
+        /* Clock Process was zapped/released while blocked */
+        if (result == -3)
+        {
+            DebugConsole2("%s: Clock handler was zapped or released while blocked. Halting.\n",
+                          __func__);
+            halt(1);
+        }
+
+        /* Message was not successfully sent */
+        if (result == -2)
+        {
+            DebugConsole2("%s: Clock handler failed to send message. Halting.\n",
+                          __func__);
+            halt(1);
+        }
+
+        /* Invalid Parameters */
+        if (result == -1)
+        {
+            DebugConsole2("%s: Invalid parameters passed for conditional send for clock handler. Halting.\n",
+                          __func__);
+            halt(1);
+        }
 
         interrupt_count = 0;
     }
@@ -69,17 +94,17 @@ void clock_handler2(int dev, void *unit)
 
     /* Enable interrupts */
     enableInterrupts();
+
 } /* clock_handler */
 
 
+/* Does Disk Handling */
 void disk_handler(int dev, void *unit)
 {
     int status;
     int result;
     int lunit = (int)unit;
 
-    DebugConsole2("%s: handler called\n", __func__);
-
     /* Check for kernel mode */
     check_kernel_mode(__func__);
 
@@ -87,40 +112,66 @@ void disk_handler(int dev, void *unit)
     disableInterrupts();
 
     /* Invalid argument checks */
-    if (dev != DISK_DEV) {
-        DebugConsole2("%s: Device value invalid. Halting.\n", __func__);
+    if (dev != DISK_DEV)
+    {
+        DebugConsole2("%s: Device value invalid. Halting.\n",
+                      __func__);
         halt(1);
     }
 
-    if ((lunit > 1) || (lunit < 0)) {
-        DebugConsole2("%s: Unit value invalid. Halting.\n", __func__);
+    if ((lunit > 1) || (lunit < 0))
+    {
+        DebugConsole2("%s: Unit value invalid. Halting.\n",
+                      __func__);
         halt(1);
     }
 
     device_input(DISK_DEV, lunit, &status);
 
-    // assuming lunit is 1 or 2
     result = MboxCondSend(io_mbox[1 + lunit],
                           &status,
                           sizeof(int));
 
-    // todo checks go here for result
+    /* Disk Process was zapped/released while blocked */
+    if (result == -3)
+    {
+        DebugConsole2("%s: Disk handler %d was zapped or released while blocked. Halting.\n",
+                      __func__,
+                      lunit);
+        halt(1);
+    }
+
+    /* Message was not successfully sent */
+    if (result == -2)
+    {
+        DebugConsole2("%s: Disk handler %d failed to send message. Halting.\n",
+                      __func__,
+                      lunit);
+        halt(1);
+    }
+
+    /* Invalid Parameters */
+    if (result == -1)
+    {
+        DebugConsole2("%s: Invalid parameters passed for conditional send for disk handler %d. Halting.\n",
+                      __func__,
+                      lunit);
+        halt(1);
+    }
 
     /* Enable interrupts */
     enableInterrupts();
+
 } /* disk_handler */
 
 
+/* Does Terminal Handling */
 void term_handler(int dev, void *unit)
 {
     int status;
     int result;
     int lunit = (int)unit;
 
-    DebugConsole2("%s: started, dev = %d, unit = %d\n", __func__, dev, lunit);
-
-    DebugConsole2("%s: handler called\n", __func__);
-
     /* Check for kernel mode */
     check_kernel_mode(__func__);
 
@@ -128,12 +179,14 @@ void term_handler(int dev, void *unit)
     disableInterrupts();
 
     /* Invalid argument checks */
-    if (dev != TERM_DEV) {
+    if (dev != TERM_DEV)
+    {
         DebugConsole2("%s: Device value invalid. Halting.\n", __func__);
         halt(1);
     }
 
-    if ((lunit > 3) || (lunit < 0)) {
+    if ((lunit > 3) || (lunit < 0))
+    {
         DebugConsole2("%s: Unit value invalid. Halting.\n", __func__);
         halt(1);
     }
@@ -144,13 +197,40 @@ void term_handler(int dev, void *unit)
                           status,
                           sizeof(int));
 
-    // todo checks go here for result
+    /* Terminal Process was zapped/released while blocked */
+    if (result == -3)
+    {
+        DebugConsole2("%s: Terminal handler %d was zapped or released while blocked. Halting.\n",
+                      __func__,
+                      lunit);
+        halt(1);
+    }
+
+    /* Message was not successfully sent */
+    if (result == -2)
+    {
+        DebugConsole2("%s: Terminal handler %d failed to send message. Halting.\n",
+                      __func__,
+                      lunit);
+        halt(1);
+    }
+
+    /* Invalid Parameters */
+    if (result == -1)
+    {
+        DebugConsole2("%s: Invalid parameters passed for conditional send for terminal handler %d. Halting.\n",
+                      __func__,
+                      lunit);
+        halt(1);
+    }
 
     /* Enable interrupts */
     enableInterrupts();
+
 } /* term_handler */
 
 
+/* Does System Call Handling */
 void syscall_handler(int dev, void *unit)
 {
     sysargs *sys_ptr;
@@ -168,14 +248,17 @@ void syscall_handler(int dev, void *unit)
     disableInterrupts();
 
     /* Sanity check: if the interrupt is not SYSCALL_INT, halt(1) */
-    if (dev != SYSCALL_INT) {
+    if (dev != SYSCALL_INT)
+    {
         DebugConsole2("%s: Device value invalid. Halting.\n", __func__);
         halt(1);
     }
 
-    /* check what system: if the call is not in the range between 0 and MAXSYSCALLS, , halt(1) */
-    if ((sys_ptr->number < 0) || (sys_ptr->number >= MAXSYSCALLS)) {
-        console("%s: sys number %d is wrong.  Halting...\n", __func__, sys_ptr->number);
+    /* check what system: if the call is not in the range between 0 and MAXSYSCALLS, halt(1) */
+    if ((sys_ptr->number < 0) || (sys_ptr->number >= MAXSYSCALLS))
+    {
+        console("syscall_handler: sys number %d is wrong.  Halting...\n",
+                sys_ptr->number);
         halt(1);
     }
 
@@ -184,4 +267,5 @@ void syscall_handler(int dev, void *unit)
 
     /* Enable interrupts */
     enableInterrupts();
+
 } /* syscall_handler */
