@@ -2,9 +2,9 @@ TARGET=libphase2.a
 ASSIGNMENT= 452phase2
 CC=gcc
 AR=ar
-COBJS= phase2.o handler.o
+COBJS= phase2.o handler.o lists.o tables.o
 CSRCS=${COBJS:.o=.c}
-HDRS=message.h handler.h
+HDRS=message.h handler.h lists.h tables.h
 
 INCLUDE = ./usloss/include
 CFLAGS = -Wall -g -I${INCLUDE} -I.
@@ -35,7 +35,7 @@ cleanAll:
 	rm -f test??.c
 	make clean
 
-phase2.o:	message.h handler.h phase2.c
+phase2.o:	message.h handler.h lists.h tables.h phase2.c
 	$(CC) $(CFLAGS) -c phase2.c
 
 #Needed for CLion IDE can be ignored

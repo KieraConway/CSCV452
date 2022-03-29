@@ -5,8 +5,10 @@
 #include <stdio.h>
 #include <string.h>
 #include "handler.h"
+#include "tables.h"
+#include "lists.h"
 
-/* ------------------------- Constants ----------------------------------- */
+/** ------------------------- Constants ----------------------------------- **/
 #define DEBUG2          1
 
 /* Status Constants */
@@ -21,7 +23,7 @@
 //#define SLOT_BLOCKED    8   // Process is blocked   //todo remove?
 
 
-/* ------------------------ Typedefs and Structs ------------------------ */
+/** ------------------------ Typedefs and Structs ------------------------ **/
 typedef struct procQueue procQueue;
 typedef struct procList * proc_ptr;
 
@@ -53,7 +55,6 @@ struct slot_table {
     char            message[MAXMESSAGE];    //contains message
     int             messageSize;            //size of message
     int             status;                 //message status
-    //bool            delivered;              //indicates if message delivered
     int             mbox_id;                //mailbox id for (for index reference)
 };
 //end of Slot structures
@@ -105,5 +106,58 @@ union psr_values {
     unsigned int integer_part;
 };
 
+/** ------------------------ External Prototypes ------------------------ **/
+/* --------------------- External lists.c Prototypes --------------------- */
+/** General, Multi-use **/
+/* Initializes Linked List */
+extern void InitializeList(slotQueue *pSlot, procQueue *pProc);
+/* Check if Slot List is Full | Returns True when Full */
+extern bool ListIsFull(const slotQueue *pSlot, const mailbox *pMbox, const procQueue *pProc);
+/* Check if Slot List is Empty | Returns True when Empty */
+extern bool ListIsEmpty(const slotQueue *pSlot, const procQueue *pProc);
 
+/** Slot Lists **/
+/* Add pSlot to Mailbox Queue | Returns 0 on Success */
+extern int AddSlotLL(slot_table * pSlot, mailbox * pMbox);
+/* Remove pSlot from Mailbox Queue | Returns slot_id of Removed Slot */
+extern int RemoveSlotLL(int slot_id, slotQueue * sq);
+/* Finds Slot in Slot Queue | Returns Pointer to Found Slot */
+extern slot_ptr FindSlotLL(int slot_id, slotQueue * pq);
+
+/** Process Lists **/
+/* Add pid to Process Queue */
+extern void AddProcessLL(int pid, procQueue * pq);
+/* Remove pid from Process Queue | Returns Pid of Removed Process*/
+extern int RemoveProcessLL(int pid, procQueue * pq);
+/* Copies a Process to another Queue | Returns Pointer to Copied Process */
+extern proc_ptr CopyProcessLL(int pid, procQueue * sourceQueue, procQueue * destQueue);
+/* Finds Process in Process Queue | Returns Pointer to Found Process */
+extern proc_ptr FindProcessLL(int pid, procQueue * pq);
+
+
+/* --------------------- External tables.c Prototypes --------------------- */
+/** Mailbox Table **/
+/* Finds Next Available mbox_id | Returns Next mbox_id */
+extern int GetNextMailID();
+/* Initializes the new mailbox */
+extern void InitializeMailbox(int newStatus, int mbox_index, int mbox_id, int maxSlots, int maxMsgSize);
+/* Gets Mailbox index from id | Returns Corresponding index */
+extern int GetMboxIndex(int mbox_id);
+
+/** Mailbox Table Release **/
+/* A Helper Function for mboxRelease */
+extern void HelperRelease(mailbox *pMbox);
+/* Checks if mailbox was released | Returns True if Released */
+extern bool MboxWasReleased(mailbox *pMbox);
+
+
+/** Slot Table **/
+/* Finds Next Available slot_id | Returns Next slot_id */
+extern int GetNextSlotID();
+/* Initializes Slot to Match Passed Parameters */
+extern void InitializeSlot(int newStatus, int slot_index, int slot_id, void *msg_ptr, int msgSize, int mbox_id);
+/* Gets Slot index from id | Returns Corresponding index */
+extern int GetSlotIndex(int slot_id);
+
+//end external function prototypes
 #endif
