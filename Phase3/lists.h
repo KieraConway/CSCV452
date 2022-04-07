@@ -1,6 +1,7 @@
-#ifndef PHASE_3_TABLES_H    //Header Guards
-#define PHASE_3_TABLES_H
+#ifndef PHASE_3_LISTS_H     //Header Guards
+#define PHASE_3_LISTS_H
 
+#include <stdbool.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -12,7 +13,7 @@
 #include <libuser.h>
 
 #include "phase3_helper.h"
-#include "lists.h"
+#include "tables.h"
 
 
 
