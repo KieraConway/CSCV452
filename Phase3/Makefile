@@ -2,9 +2,9 @@ TARGET=libphase3.a
 ASSIGNMENT=452phase3
 CC=gcc
 AR=ar
-COBJS= phase3.o tables.o
+COBJS= phase3.o tables.o lists.o
 CSRCS=${COBJS:.o=.c}
-HDRS= sems.h phase3_helper.h tables.h
+HDRS= sems.h phase3_helper.h tables.h lists.h
 
 INCLUDE = ./usloss/include
 CFLAGS = -Wall -g -I${INCLUDE} -I. -Wno-int-to-pointer-cast -Wno-pointer-to-int-cast
@@ -38,7 +38,7 @@ cleanAll:
 	rm -f test??.c
 	make clean
 
-phase3.o:	sems.h phase3_helper.h tables.h
+phase3.o:	sems.h phase3_helper.h tables.h lists.h
 	$(CC) $(CFLAGS) -c phase3.c
 
 #Needed for CLion IDE can be ignored

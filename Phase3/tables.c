@@ -1,93 +1,138 @@
 /*  tables.c handles process table and sem table functions*/
 
 #include "tables.h"
+#include "phase3_helper.h"
 
-/* -------------------------------- Globals -------------------------------- */
-
+/** ------------------------------------- Globals ------------------------------------- **/
 /* Flags */
-int debugFlag = 0;              //used for debugging
+extern int debugFlag;
 
+/* General Globals */
+extern int start2Pid;
 
-/* Process Globals */
-usr_proc_struct UsrProcTable[MAXPROC];  //Process Table
-int totalProc;           //total Processes
+/* Semaphore Globals */
+extern usr_proc_struct UsrProcTable[MAXPROC];  //Process Table
+extern int totalProc;           //total Processes
 extern unsigned int nextPID;    //next process id
 
 /* Sem Globals */
-//todo
+extern semaphore_struct SemaphoreTable[MAXSEMS]; //Semaphore Table
+extern int totalSem;            //total Semaphores
+extern unsigned int nextSID;    //next semaphore id
 
-/* -------------------------- Functions ----------------------------------- */
+/** ------------------------------------ Functions ------------------------------------ **/
+/* -------------------------------- External Prototypes -------------------------------- */
+extern void DebugConsole3(char *format, ...);
 
-/* * * * * * * * * * * * Process Table Functions * * * * * * * * * * * */
+/* ------------------------------ Process Table Functions ------------------------------ */
 
 /* ------------------------------------------------------------------------
+ * //todo will we need? because fork1 returns PID
    Name -           GetNextPID
    Purpose -        Finds next available pid
    Parameters -     none
    Returns -        >0: next pid
    Side Effects -   none
    ----------------------------------------------------------------------- */
-int GetNextPID()
-{
-//    int newMid = -1;
-//    int mboxIndex = GetMboxIndex(next_mid);
+//int GetNextPID()
+//{
+//    int newPID = -1;
+//    int procIndex = GetProcIndex(nextPID);
 //
-//    if (totalMailbox < MAXMBOX)
-//    {
-//        while ((totalMailbox < MAXMBOX) && (MailboxTable[mboxIndex].status != EMPTY))
-//        {
-//            next_mid++;
-//            mboxIndex = next_mid % MAXMBOX;
+//    if (totalProc < MAXPROC) {
+//        while ((totalProc < MAXPROC) && (UsrProcTable[procIndex].status != STATUS_EMPTY)) {
+//            nextPID++;
+//            procIndex = nextPID % MAXPROC;
 //        }
 //
-//        newMid = next_mid % MAXMBOX;    //assign newPid *then* increment next_pid
+//        newPID = nextPID % MAXPROC;
 //    }
 //
-//    return newMid;
-
-} /* GetNextPID */
+//    return newPID;
+//
+//} /* GetNextPID */
 
 
 /* ------------------------------------------------------------------------
-   Name -           InitializeProcTable
-   Purpose -        Initializes the new process
-   Parameters -
+   Name -           ProcessInit
+   Purpose -        Initializes Proc Table Entry
+   Parameters -     index:  process location in ProcTable
+                    pid:    unique process ID
+   Returns -        none
+   Side Effects -   Clears Process from Table
+   ----------------------------------------------------------------------- */
+void ProcessInit(int index, short pid) {
+
+    /*** Function Initialization ***/
+    usr_proc_struct * pProc = &UsrProcTable[index];
+
+    /*** Clear out ProcTable Entry ***/
+    memset(pProc->name,
+           0,
+           sizeof(pProc->name));        //Process Name
+
+    memset(pProc->startArg,
+           0,
+           sizeof(pProc->startArg));    //Args for StartFunc
+
+    pProc->index = -1;                      //Process Index
+    pProc->startFunc = NULL;                //Starting Function
+    pProc->pid = -1;                        //Process ID
+    pProc->stackSize = -1;                  //Process Stack Size
+    pProc->priority = -1;                   //Process Priority
+    pProc->mboxID = -1;                     //Process Private Mailbox
+    pProc->status = STATUS_EMPTY;           //Process Status
+    pProc->parentPID = -1;                  //Process Parent
+    InitializeList(&pProc->children, NULL); //Slot List
+
+} /* ProcessInit */
+
+
+/* ------------------------------------------------------------------------
+   Name -           AddToProcTable
+   Purpose -        Adds Process to ProcTable
+   Parameters -     newStatus:  New status being assigned
+                    name:       character string containing process’s name
+                    pid:        unique process ID
+                    func:       address of the function to spawn
+                    arg:        parameter passed to spawned function
+                    stack_size: stack size (in bytes)
+                    priority:   priority
    Returns -        none
    Side Effects -   Process added to ProcessTable
    ----------------------------------------------------------------------- */
-void InitializeProcTable() {
+void AddToProcTable(int newStatus, char name[], int pid, int (* startFunc) (char *),
+                    char startArg, int stackSize, int priority) {
 
-    //todo: update in phase3_helper.h
-//    //if removing a mailbox from MailboxTable
-//    if(newStatus == EMPTY)
-//    {
-//        mbox_id = -1;
-//        maxSlots = -1;
-//        maxMsgSize = -1;
-//    }
-//
-//    mailbox * pMbox = &MailboxTable[mbox_index];
-//
-//    pMbox->mbox_index = mbox_index;             //Mailbox Slot
-//    pMbox->mbox_id = mbox_id;                   //Mailbox ID
-//    pMbox->status = newStatus;                  //Mailbox Status
-//    InitializeList(NULL,
-//                   &pMbox->activeProcs);        //Waiting Process List
-//    InitializeList(NULL,
-//                   &pMbox->waitingToSend);      //Waiting to Send List
-//    InitializeList(NULL,
-//                   &pMbox->waitingToReceive);   //Waiting to Receive List
-//    pMbox->activeProcs.mbox_id = mbox_id;       //MailboxID inside Active Queue
-//    pMbox->waitingToSend.mbox_id = mbox_id;     //MailboxID inside Send Queue
-//    pMbox->waitingToReceive.mbox_id = mbox_id;  //MailboxID inside Receive Queue
-//    pMbox->maxSlots = maxSlots;                 //Max Slots
-//    pMbox->activeSlots = 0;                     //Active Slots
-//    pMbox->maxMsgSize = maxMsgSize;             //Slot Size
-//    InitializeList(&pMbox->slotQueue,
-//                   NULL);                 //Slot List
-//    pMbox->slotQueue.mbox_id = mbox_id;          //MailboxID inside Slot Queue
+    /*** Function Initialization ***/
+    int parentPID = getpid();   //what if adding self to proc table?
+    int index = GetProcIndex(pid);
+    usr_proc_ptr pProc = &UsrProcTable[index];
 
-} /* InitializeProcTable */
+    /*** Update ProcTable Entry ***/
+    memcpy(pProc->name,
+           name,
+           sizeof(name));               //Process Name
+    pProc->index = index;               //Process Index
+    pProc->startFunc = startFunc;       //Starting Function
+    pProc->pid = pid;                   //Process ID
+    pProc->stackSize = stackSize;       //Process Stack Size
+    pProc->priority = priority;         //Process Priority
+    pProc->status = newStatus;          //Process Status
+    InitializeList(&pProc->children,
+    NULL);                              //Children List //TODO: FIX INDENT
+
+    if(parentPID > start2Pid){                  //prevents Start2 from being Parent
+        pProc->parentPID = parentPID;   //Process Parent
+    }
+
+    if(startArg) {
+        memcpy(pProc->startArg,
+               &startArg,
+               sizeof(pProc->startArg)); //Args for StartFunc
+    }
+
+} /* AddToProcTable */
 
 
 /* ------------------------------------------------------------------------
@@ -97,19 +142,102 @@ void InitializeProcTable() {
    Returns -        Corresponding Index
    Side Effects -   none
    ----------------------------------------------------------------------- */
-int GetProcIndex(int pid)
-{
+int GetProcIndex(int pid) {
     return pid % MAXPROC;
 
 } /* GetProcIndex */
 
-/* * * * * * * * * * * END OF Process Table Functions * * * * * * * * * * */
+/* ----------------------------- Semaphore Table Functions ----------------------------- */
+
+/* ------------------------------------------------------------------------
+ * //todo will we need?
+   Name -           GetNextPID
+   Purpose -        Finds next available pid
+   Parameters -     none
+   Returns -        >0: next pid
+   Side Effects -   none
+   ----------------------------------------------------------------------- */
+//int GetNextSID()
+//{
+//    int newSID = -1;
+//    int semIndex = GetSemIndex(nextSID);
+//
+//    if (totalSem < MAXSEMS) {
+//        while ((totalSem < MAXSEMS) && (UsrProcTable[semIndex].status != STATUS_EMPTY)) {
+//            newSID++;
+//            semIndex = nextSID % MAXSEMS;
+//        }
+//
+//        newSID = nextSID % MAXSEMS;
+//    }
+//
+//    return newSID;
+//
+//} /* GetNextSID */
 
 
+/* ------------------------------------------------------------------------
+   Name -           SemaphoreInit
+   Purpose -        Initializes Sem Table Entry
+   Parameters -     index:  semaphore location in SemTable
+                    sid:    unique semaphore ID
+   Returns -        none
+   Side Effects -   Clears Process from Table
+   ----------------------------------------------------------------------- */
+void SemaphoreInit(int index, short sid) {
 
-/* * * * * * * * * * * * Sem Table Functions * * * * * * * * * * * */
+    /*** Function Initialization ***/
+    semaphore_struct * pSem = &SemaphoreTable[index];
 
-/* * * * * * * * * * * END OF Sem Table Functions * * * * * * * * * * */
+    /*** Clear out SemTable Entry ***/
+    pSem->status = STATUS_EMPTY;
+    pSem->count = -1;
+    pSem->mutex = -1;
+    pSem->sid = -1;
 
+    InitializeList(NULL, &pSem->WaitingSems); //Slot List
+
+} /* SemaphoreInit */
+
+
+/* ------------------------------------------------------------------------
+ * TODO: UPDATE function header info
+ *
+   Name -           AddToSemTable
+   Purpose -        Adds Semaphore to SemTable
+   Parameters -     newStatus:  New status being assigned
+                    sid:        unique semaphore ID
+                    newMutex:
+                    newCount:
+   Returns -        none
+   Side Effects -   Process added to ProcessTable
+   ----------------------------------------------------------------------- */
+void AddToSemTable(int sid, int newMutex, int newStatus, int newCount) {
+
+    /*** Function Initialization ***/
+    int index = GetProcIndex(sid);
+    sem_struct_ptr pSem = &SemaphoreTable[index];
+
+    /*** Update SemTable Entry ***/
+    pSem->sid = sid;
+    pSem->mutex = newMutex;
+    pSem->status = newStatus;
+    pSem->count = newCount;
+    InitializeList(NULL, &pSem->WaitingSems);   //Waiting List
+
+} /* AddToSemTable */
+
+
+/* ------------------------------------------------------------------------
+   Name -           GetProcIndex
+   Purpose -        Gets Process index from pid
+   Parameters -     pid:    Unique Process ID
+   Returns -        Corresponding Index
+   Side Effects -   none
+   ----------------------------------------------------------------------- */
+int GetSemIndex(int sid) {
+    return sid % MAXSEMS;
+
+} /* GetSemIndex */
 
 /* ------------------------ END OF Table Functions ------------------------ */
