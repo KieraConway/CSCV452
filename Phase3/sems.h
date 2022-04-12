@@ -8,6 +8,13 @@
 #include <string.h>
 #include "tables.h"
 #include "lists.h"
+#include "phase3_helper.h"
+
+#define SEM_READY 0
+#define SEM_USED  1
+#define LOCKED    1
+#define UNLOCKED  0
+#define FREEING   2
 
 /** ------------------------ Typedefs and Structs ------------------------ **/
 typedef struct semaphore_struct semaphore_struct;
@@ -28,13 +35,15 @@ typedef struct semQueue {
     int total;                   //counts total semaphores in queue
 } SemQueue;
 
-struct semaphore_struct {
-    int sid;                     // ID of semaphore
-    int mutex;                   // semaphore mutex
-    int status;                  // semaphore status
-    int count;                   // number of semaphores todo do we need?
-    semQueue WaitingSems;        // list of waiting semaphores
-};
+//struct semaphore_struct {
+//    int sid;                     // ID of semaphore
+//    int mutex;                   // semaphore mutex
+//    int status;                  // semaphore status
+//    semQueue WaitingSems;        // list of waiting semaphores
+//    int mboxID;                        // private mbox ID
+//    int value;                         // value of semaphore
+//    struct procQueue blockedProcs;      // list of blocked processes
+//};
 
 /** ------------------------ External Prototypes ------------------------ **/
 /* --------------------- External lists.c Prototypes --------------------- */
@@ -55,8 +64,8 @@ extern int RemoveSemaphoreLL(int sid, semQueue * sq);
 /* Initializes Sem Table Entry */
 void SemaphoreInit(int index, short sid);
 /* Adds Semaphore to Table */
-void AddToSemTable(int sid, int newMutex, int newStatus, int newCount);
-/* Gets Mailbox index from id | Returns Corresponding index */
+void AddToSemTable(int sid, int newMutex, int newStatus, int newMboxID, int newValue);
+/* Gets Semaphore index from sid | Returns Corresponding index */
 int GetSemIndex(int sid);
 
 #endif
