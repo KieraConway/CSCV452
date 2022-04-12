@@ -25,7 +25,7 @@ extern unsigned int nextSID;    //next semaphore id
 /* --------------------------------- General Functions --------------------------------- */
 
 /* ------------------------------------------------------------------------
-    Name -          InitializeList
+    Name -          InitializeList  //TODO: remove pSem option if not used
     Purpose -       Initialize List pointed to by parameter
     Parameters -    *pCurProc: Pointer to Process List
     Returns -       None
@@ -110,6 +110,11 @@ int AddProcessLL(usr_proc_ptr pProc, procQueue * pq) {
     /*** Error Check: Verify Space Available ***/
     if (ListIsFull(pq, NULL)) {
         DebugConsole3("%s: Queue is full.\n", __func__);
+        return -1;
+    }
+
+    if (totalProc > MAXPROC) {
+        DebugConsole3("%s: Exceeding MAXPROC.\n", __func__);
         return -1;
     }
 

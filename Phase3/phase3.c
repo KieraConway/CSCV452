@@ -22,12 +22,6 @@
 /** ------------------------------ Prototypes ------------------------------ **/
 
 int start2(char *); 
-//int spawn_real(char *name,
-//               int (*func)(char *),
-//               char *arg,
-//               int stack_size,
-//              int priority);
-//int wait_real(int *status);
 extern int start3();
 
 /*** Functions Brought in From Phase 1 ***/
@@ -38,6 +32,7 @@ void DebugConsole3(char *format, ...);
 void nullsys3(sysargs *args);
 void setUserMode();
 static int spawn_launch(char *arg);
+void syscall_Handler(sysargs *args);
 
 /*** Provided Kernel Mode Functions **/
 int kerSpawn(char *name,
@@ -51,9 +46,9 @@ int kerSemCreate(int init_value);
 int kerSemP(int semaphore);
 int kerSemV(int semaphore);
 int kerSemFree(int semaphore);
-void kerGetTimeOfDay(int *time);
-void kerCPUTime(int *time);
-void kerGetPID(int *pid);
+//void kerGetTimeOfDay(int *time);
+//void kerCPUTime(int *time);
+//void kerGetPID(int *pid);
 
 /*** Needed for sys_vec ***/
 static void sysSpawn(sysargs *args);
@@ -116,7 +111,7 @@ int start2(char *arg) {
         sys_vec[i] = nullsys3;
     }
 
-    // Constants from usyscall.h from usloss include file
+    /*** Set sys_vec Calls ***/
     sys_vec[SYS_SPAWN] = sysSpawn;
     sys_vec[SYS_WAIT] = sysWait;
     sys_vec[SYS_TERMINATE] = sysTerminate;
@@ -158,19 +153,20 @@ int start2(char *arg) {
      */
 
     /*** Add to ProcTable ***/
-    AddToProcTable(STATUS_READY,
-                   "start2",
-                   getpid(),
-                   0,
-                   NULL,
-                   0,
-                   5);
+//    AddToProcTable(STATUS_READY,
+//                   "start2",
+//                   getpid(),
+//                   0,
+//                   NULL,
+//                   0,
+//                   5);
+//TODO: do we need to at any time to reference the process in the list?
 
 
     pid = kerSpawn("start3", start3, NULL, 4*USLOSS_MIN_STACK, 3);
     pid = kerWait(&status);
+//    kerTerminate(0);
 
-    kerTerminate(2);
     return 0;
 
 } /* start2 */
@@ -197,7 +193,7 @@ static void sysSpawn(sysargs *args) {
 
     /*** Check for Invalid Empty Args ***/
     if (args == NULL) {
-        DebugConsole3("args is NULL...\n");
+        DebugConsole3("Error: Passing NULL for args\n");
         kerTerminate(1);
     }
 
@@ -209,33 +205,51 @@ static void sysSpawn(sysargs *args) {
 
     /*** Get Functions Arguments ***/
     func      = args->arg1;
-    strcpy(arg, args->arg2);
+
+    if (args->arg2) {
+        strcpy(arg, args->arg2);
+    }
+//    else {
+//        strcpy(arg, '\0');
+//    }
+//todo: delete if not needed
+
     stackSize = (int) args->arg3;
     priority  = (int) args->arg4;
-    strcpy(name, args->arg5);
+    if (args->arg5) {
+        strcpy(name, args->arg5);
+    }
+//    else {
+//        strcpy(arg, '\0');
+//    }
+//todo: delete if not needed
 
-    /*** Value Checks ***/
-    // Out-of-range priorities
+    /*** Error Check: Invalid Values ***/
+    /* Out-of-range Priorities */
     if ((priority > LOWEST_PRIORITY) || (priority < HIGHEST_PRIORITY)) {
-        DebugConsole3("Process priority is out of range. Must be 1 - 5...\n");
+        DebugConsole3("%s : Process priority is out of range [1 - 5].\n",
+                      __func__);
         kerTerminate(1);
     }
 
-    // func is NULL
+    /* Function was Null */
     if (func == NULL) {
-        DebugConsole3("func was null...\n");
+        DebugConsole3("%s : Function was Null.\n",
+                      __func__);
         kerTerminate(1);
     }
 
-    // name is NULL
+    /* Name was Null */
     if (name == NULL) {
-        DebugConsole3("name was null...\n");
+        DebugConsole3("%s : Name was Null.\n",
+                      __func__);
         kerTerminate(1);
     }
 
-    // Stacksize is less than USLOSS_MIN_STACK
+    /* Invalid StackSize */
     if (stackSize < USLOSS_MIN_STACK) {
-        DebugConsole3("stackSize was less than minimum stack address...\n");
+        DebugConsole3("%s : Stack size [%d] is less than minimum stack address [%d].\n",
+                      __func__, stackSize, USLOSS_MIN_STACK);
         kerTerminate(1);
     }
 
@@ -305,9 +319,6 @@ int kerSpawn(char *name, int (*func)(char *), char *arg, int stack_size, int pri
         DebugConsole3("%s : Fork Failure\n", __func__);
         return -1;
     }
-
-    /*** Change to User-mode ***/
-    //setUserMode(); TODO: need?
 
     /*** Update Processes ***/
     /* Add Kid to Process Table */
@@ -408,8 +419,10 @@ int kerWait(int *status) {
 
     /*** Check for Kernel Mode ***/
     check_kernel_mode(__func__);
+
     index = getpid() % MAXPROC;
     UsrProcTable[index].status == STATUS_JOIN_BLOCK;
+
     return join(status);
 
 //    if (strt2 == 0){
@@ -420,10 +433,6 @@ int kerWait(int *status) {
 //    else {
 //        strt2 = 0;
 //    }
-
-
-
-    return 0;
 
 } /* kerWait */
 
@@ -461,12 +470,13 @@ static void sysTerminate(sysargs *args) {
 void kerTerminate(int exit_code) {
     /*** Function Initialization ***/
     int pid;
-    usr_proc_ptr p_ptr;
+    int parentID;
+    usr_proc_ptr p_ptr, parent_ptr;
 
     /*** Check for Kernel Mode ***/
     check_kernel_mode(__func__);
 
-    // get id of current running process and zap all children (make sure to remove them off the list)
+    /*** Get pid of current running process and zap all children ***/
     p_ptr = &UsrProcTable[getpid() % MAXPROC];
 
     while (p_ptr->children.total > 0) {
@@ -474,7 +484,18 @@ void kerTerminate(int exit_code) {
         zap(pid);
     }
 
+    /*** Remove child process from Parent List ***/
+    parentID = p_ptr->parentPID;
+
+    /** Find Parent Index **/
+    if (parentID > -1) {
+        parent_ptr = &UsrProcTable[parentID % MAXPROC];
+        RemoveProcessLL(p_ptr->pid, &parent_ptr->children);
+    }
+
+    /** Clear out Child Proc Slot **/
     ProcessInit(p_ptr->pid % MAXPROC, p_ptr->pid);
+
     quit(exit_code);
 
 } /* kerTerminate */
@@ -488,7 +509,31 @@ void kerTerminate(int exit_code) {
   Side Effects -
   ----------------------------------------------------------------------- */
 static void sysSemCreate(sysargs *args) {
-    return;
+    /*** Function Initialization ***/
+    int handle;
+    int semaphore;
+
+    /*** Check for Kernel Mode ***/
+    check_kernel_mode(__func__);
+
+    handle = args->arg1;
+
+    semaphore = kerSemCreate(handle);
+
+    /*** Pack output ***/
+    args->arg1 = (void *) semaphore;
+
+    /*** Check if initial value is negative or no more semaphores available ***/
+    if (semaphore == -1) {
+        args->arg4 = -1;
+    }
+    else {
+        args->arg4 = 0;
+    }
+
+    /*** Switch into User Mode ***/
+    setUserMode();
+
 
 } /* sysSemCreate */
 
@@ -501,20 +546,73 @@ static void sysSemCreate(sysargs *args) {
   Side Effects -
   ----------------------------------------------------------------------- */
 int kerSemCreate(int init_value) {
-    return 0;
+    /*** Function Initialization ***/
+    int sid;
+    int mbox;
+
+    /*** Check for Kernel Mode ***/
+    check_kernel_mode(__func__);
+
+    /** Error Check: Invalid init_value ***/
+    if (init_value < 0) {
+        DebugConsole3("%s: init_value was negative...\n", __func__);
+        return -1;
+    }
+
+    /*** Error Check: Verify Semaphores are available ***/
+    if (totalSem > MAXSEMS) {
+        DebugConsole3("%s: No more semaphores are available...\n", __func__);
+        return -1;
+    }
+
+    /*** Get next Available Semaphore ***/
+    for (int i = 0; i < MAXSEMS; i++) {
+        if (SemaphoreTable[i].sid == -1) {
+            sid = i;
+            break;
+        }
+    }
+
+    totalSem++; // Increment total semaphores
+    mbox = MboxCreate(0, sizeof(int)); // get mbox for semaphore
+
+    /*** Add Semaphore to Table ***/
+    AddToSemTable(sid, 0, SEM_READY, mbox, 1);
+
+    return sid;
 
 } /* kerSemCreate */
 
 
 /* ------------------------------------------------------------------------
-  Name -           SemV
+  Name -           sysSemV [SemV]
   Purpose -
   Parameters -
   Returns -
   Side Effects -
   ----------------------------------------------------------------------- */
 static void sysSemV(sysargs *args) {
+    /*** Function Initialization ***/
+    int handler;
+
+    /*** Check for Kernel Mode ***/
+    check_kernel_mode(__func__);
+
+    handler = args->arg1;
+
+    if (SemaphoreTable[handler % MAXSEMS].sid != handler) {
+        args->arg4 = (void *) -1;
+
+        /*** Switch into User Mode ***/
+        setUserMode();
+
     return;
+    }
+
+    args->arg4 = (void *) kerSemV(handler);
+
+    /*** Switch into User Mode ***/
+    setUserMode();
 
 } /* sysSemV */
 
@@ -527,32 +625,112 @@ static void sysSemV(sysargs *args) {
   Side Effects -
   ----------------------------------------------------------------------- */
 int kerSemV(int semaphore) {
+    /*** Function Initialization ***/
+    sem_struct_ptr sem;
+    usr_proc_ptr proc;
+    int pid;
+    int headPID;
+
+    /*** Check for Kernel Mode ***/
+    check_kernel_mode(__func__);
+
+    sem = &SemaphoreTable[semaphore % MAXSEMS];
+
+    /*** There are Blocked Processes-> unblock head process ***/
+    if (sem->blockedProcs.total > 0) {
+
+        /*** Unblock Process from Blocked List ***/
+        pid = sem->blockedProcs.pHeadProc->pProc->pid;
+        headPID = RemoveProcessLL(pid, &sem->blockedProcs);
+        proc = &UsrProcTable[headPID % MAXPROC];
+
+        MboxSend(proc->mboxID, NULL, 0);
+    }
+    /*** Sem Value == 0-> increment ***/
+    else {
+        sem->value++; // increment semaphore value
+    }
+
     return 0;
 
 } /* kerSemV */
 
 
 /* ------------------------------------------------------------------------
-  Name -           SemP
+  Name -           sysSemP [SemP]
   Purpose -
   Parameters -
   Returns -
   Side Effects -
   ----------------------------------------------------------------------- */
 static void sysSemP(sysargs *args) {
-    return;
+    /*** Function Initialization ***/
+    int handler;
+
+    /*** Check for Kernel Mode ***/
+    check_kernel_mode(__func__);
+
+    handler = args->arg1;
+
+    if (SemaphoreTable[handler % MAXSEMS].sid != handler) {
+        args->arg4 = (void *) -1;
+
+        /*** Switch into User Mode ***/
+        setUserMode();
+
+        return;
+    }
+
+    args->arg4 = (void *) kerSemP(handler);
+
+    /*** Switch into User Mode ***/
+    setUserMode();
 
 } /* sysSemP */
 
 
 /* ------------------------------------------------------------------------
-  Name -           semv_real
-  Purpose -
-  Parameters -
-  Returns -
-  Side Effects -
+  Name -            kerSemP [semP_real]
+  Purpose -         Decrements the semaphore count by one.
+
+  Parameters -      semaphore from SemTable
+                    arg1: semaphore handle (SID)
+  Returns -         arg4:
+                        -1 if semaphore handle is invalid
+                         0 otherwise
+  Side Effects -    Blocks process if the count is zero.
   ----------------------------------------------------------------------- */
 int kerSemP(int semaphore) {
+    /*** Function Initialization ***/
+    sem_struct_ptr sem;
+    usr_proc_ptr  proc;
+    int result;
+
+    /*** Check for Kernel Mode ***/
+    check_kernel_mode(__func__);
+
+    sem = &SemaphoreTable[semaphore % MAXSEMS];
+
+    /*** Sem Count > 0 -> Decrement Count ***/
+    if (sem->value > 0) {
+        sem->value--; // decrement semaphore value
+    }
+    /*** Sem Count <= 0 -> block ***/
+    else {
+        /*** Add Process to Blocked List ***/
+        proc = &UsrProcTable[getpid() % MAXPROC];
+        AddProcessLL(proc, &sem->blockedProcs);
+
+        /*** Block ***/
+        MboxReceive(proc->mboxID, NULL, 0);
+
+        /*** Check if the Semaphore was Freed while Blocked ***/
+        if (sem->status == FREEING) {
+            setUserMode();
+            Terminate(1);
+        }
+    }
+
     return 0;
 
 } /* kerSemP */
@@ -566,7 +744,18 @@ int kerSemP(int semaphore) {
   Side Effects -
   ----------------------------------------------------------------------- */
 static void sysSemFree(sysargs *args) {
+    int handler;
+
+    handler = args->arg1;
+
+    if (SemaphoreTable[handler % MAXSEMS].sid != handler) {
+        args->arg4 = (void *) -1;
     return;
+    }
+
+    args->arg4 = (void *) kerSemFree(handler);
+
+    setUserMode();
 
 } /* sysSemFree */
 
@@ -578,10 +767,43 @@ static void sysSemFree(sysargs *args) {
   Returns -
   Side Effects -
   ----------------------------------------------------------------------- */
-int kersSemFree(int semaphore) {
+int kerSemFree(int semaphore) {
+    /*** Function Initialization ***/
+    sem_struct_ptr sem;
+    usr_proc_ptr proc;
+    int pid;
+    int headPID;
+    int result;
+
+    sem = &SemaphoreTable[semaphore % MAXSEMS];
+    // remove processes from list
+    // if any are blocked -> arg4 = 1
+    // Terminate processes
+    // Clear out semaphore
+
+    // no blocked processes -> just empty semaphore in table
+    // blocked processes -> FREEING status -> empty status
+    if (sem->blockedProcs.total == 0) {
+        SemaphoreInit(semaphore % MAXSEMS,sem->sid);
+        totalSem--;
+    }
+    else {
+        sem->status = FREEING;
+
+        while (sem->blockedProcs.total > 0) {
+            pid = sem->blockedProcs.pHeadProc->pProc->pid;
+            headPID = RemoveProcessLL(pid, &sem->blockedProcs);
+            proc = &UsrProcTable[pid % MAXPROC];
+
+            result = MboxSend(proc->mboxID, NULL, 0);
+        }
+
+        return 1;
+    }
+
     return 0;
 
-} /* kersSemFree */
+} /* kerSemFree */
 
 
 /* ------------------------------------------------------------------------
@@ -598,7 +820,8 @@ static void sysGetTimeOfDay(sysargs *args) {
     /*** Check for Kernel Mode ***/
     check_kernel_mode(__func__);
 
-    kerGetTimeOfDay(&time);
+    /*** Get Time ***/
+    time = sys_clock();
 
     /*** Pack output ***/
     args->arg1 = (void *) time;
@@ -607,23 +830,6 @@ static void sysGetTimeOfDay(sysargs *args) {
     setUserMode();
 
 } /* sysGetTimeOfDay */
-
-
-/* ------------------------------------------------------------------------
-  Name -           kerGetTimeOfDay
-  Purpose -
-  Parameters -
-  Returns -
-  Side Effects -
-  ----------------------------------------------------------------------- */
-void kerGetTimeOfDay(int *time) {
-    /*** Check for Kernel Mode ***/
-    check_kernel_mode(__func__);
-
-    /*** sys_clock() from USLOSS ***/
-    *time = sys_clock();
-
-} /* kerGetTimeOfDay */
 
 
 /* ------------------------------------------------------------------------
@@ -640,7 +846,8 @@ static void sysCPUTime(sysargs *args) {
     /*** Check for Kernel Mode ***/
     check_kernel_mode(__func__);
 
-    kerCPUTime(&cpuTime);
+    /*** Get Time ***/
+    cpuTime = readtime();
 
     /*** Pack output ***/
     args->arg1 = (void *) cpuTime;
@@ -649,23 +856,6 @@ static void sysCPUTime(sysargs *args) {
     setUserMode();
 
 } /* sysCPUTime */
-
-
-/* ------------------------------------------------------------------------
-  Name -           kerCPUTime
-  Purpose -
-  Parameters -
-  Returns -
-  Side Effects -
-  ----------------------------------------------------------------------- */
-void kerCPUTime(int *time) {
-    /*** Check for Kernel Mode ***/
-    check_kernel_mode(__func__);
-
-    /*** readtime() from Phase 1 ***/
-    *time = readtime();
-
-} /* kerCPUTime */
 
 
 /* ------------------------------------------------------------------------
@@ -682,7 +872,8 @@ static void sysGetPID(sysargs *args) {
     /*** Check for Kernel Mode ***/
     check_kernel_mode(__func__);
 
-    kerGetPID(&pid);
+    /*** Get PID ***/
+    pid = getpid();
 
     /*** Pack output ***/
     args->arg1 = (void *) pid;
@@ -691,22 +882,6 @@ static void sysGetPID(sysargs *args) {
     setUserMode();
 
 } /* sysGetPID */
-
-
-/* ------------------------------------------------------------------------
-  Name -           kerGetPID
-  Purpose -
-  Parameters -
-  Returns -
-  Side Effects -
-  ----------------------------------------------------------------------- */
-void kerGetPID(int *pid) {
-    /*** Check for Kernel Mode ***/
-    check_kernel_mode(__func__);
-
-    *pid = getpid();
-
-} /* kerGetPID */
 
 
 /***---------------------------------------------- Phase 1 Functions -----------------------------------------------***/
@@ -722,7 +897,7 @@ void check_kernel_mode(const char *functionName)
 {
     union psr_values psrValue; /* holds caller's psr values */
 
-    DebugConsole3("check_kernel_node(): verifying kernel mode for %s\n", functionName);
+    //DebugConsole3("check_kernel_node(): verifying kernel mode for %s\n", functionName);
 
     /* test if in kernel mode; halt if in user mode */
     psrValue.integer_part = psr_get();
@@ -733,7 +908,7 @@ void check_kernel_mode(const char *functionName)
         halt(1);
     }
 
-    DebugConsole3("Function is in Kernel mode (:\n");
+    //DebugConsole3("Function is in Kernel mode (:\n");
 
 } /* check_kernel_mode */
 
@@ -797,10 +972,10 @@ void setUserMode() {
   Side Effects -
   ----------------------------------------------------------------------- */
 static int spawn_launch(char *arg) {
-
     /*** Function Initialization ***/
     int my_location;
     int result;
+    int (* start_func) (char *);
     usr_proc_ptr pProc;
 
     /*** Check for Kernel Mode ***/
@@ -810,15 +985,27 @@ static int spawn_launch(char *arg) {
     my_location = getpid() % MAXPROC;
     pProc = &UsrProcTable[my_location];
 
-    UsrProcTable[my_location].status = STATUS_READY; //todo is this status right?
+    /*** Error Check: Process Not Creation Not Completed ***/
+    if (UsrProcTable[my_location].pid != getpid()) {
+        UsrProcTable[my_location].mboxID = MboxCreate(0, sizeof(int));
+    }
 
     /*** Sync with Parent Process ***/
     MboxReceive(pProc->mboxID, 0, 0);
 
+    UsrProcTable[my_location].status = STATUS_READY; //todo is this status right?
+
     // get start functions and argument
     if (!is_zapped()) {
         setUserMode();
-        result = pProc->startFunc(pProc->startArg);
+
+        if (*arg == -1 || *arg == 0) {
+            result = pProc->startFunc(NULL);
+        }
+        else {
+            result = pProc->startFunc(arg); //todo: why not pProc->startArg ?
+        }
+
         Terminate(result);
     }
     else {
@@ -831,3 +1018,15 @@ static int spawn_launch(char *arg) {
     return 0;
 
 } /* spawn_launch */
+
+
+/* ------------------------------------------------------------------------
+  Name -           syscall_Handler
+  Purpose -
+  Parameters -
+  Returns -
+  Side Effects -
+  ----------------------------------------------------------------------- */
+void syscall_Handler(sysargs *args) {
+
+} /* syscall_Handler */

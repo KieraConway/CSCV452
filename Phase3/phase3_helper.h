@@ -59,6 +59,16 @@ struct usr_proc_struct {
 };
 //end of Process structures
 
+/* Structures for Semaphores */
+struct semaphore_struct {
+    int sid;                           // ID of semaphore
+    int mutex;                         // semaphore mutex
+    int status;                        // semaphore status
+    int mboxID;                        // private mbox ID
+    int value;                         // value of semaphore
+    procQueue blockedProcs;            // list of blocked processes
+};
+//end of Semaphores structures
 
 struct psr_bits {
     unsigned int cur_mode:1;

@@ -105,7 +105,7 @@ void AddToProcTable(int newStatus, char name[], int pid, int (* startFunc) (char
                     char startArg, int stackSize, int priority) {
 
     /*** Function Initialization ***/
-    int parentPID = getpid();   //what if adding self to proc table?
+    int parentPID = getpid();   //todo: what if adding self to proc table?
     int index = GetProcIndex(pid);
     usr_proc_ptr pProc = &UsrProcTable[index];
 
@@ -120,9 +120,9 @@ void AddToProcTable(int newStatus, char name[], int pid, int (* startFunc) (char
     pProc->priority = priority;         //Process Priority
     pProc->status = newStatus;          //Process Status
     InitializeList(&pProc->children,
-    NULL);                              //Children List //TODO: FIX INDENT
+                   NULL);         //Children List
 
-    if(parentPID > start2Pid){                  //prevents Start2 from being Parent
+    if(parentPID > start2Pid){          //Prevent Start2 from being Parent
         pProc->parentPID = parentPID;   //Process Parent
     }
 
@@ -150,33 +150,6 @@ int GetProcIndex(int pid) {
 /* ----------------------------- Semaphore Table Functions ----------------------------- */
 
 /* ------------------------------------------------------------------------
- * //todo will we need?
-   Name -           GetNextPID
-   Purpose -        Finds next available pid
-   Parameters -     none
-   Returns -        >0: next pid
-   Side Effects -   none
-   ----------------------------------------------------------------------- */
-//int GetNextSID()
-//{
-//    int newSID = -1;
-//    int semIndex = GetSemIndex(nextSID);
-//
-//    if (totalSem < MAXSEMS) {
-//        while ((totalSem < MAXSEMS) && (UsrProcTable[semIndex].status != STATUS_EMPTY)) {
-//            newSID++;
-//            semIndex = nextSID % MAXSEMS;
-//        }
-//
-//        newSID = nextSID % MAXSEMS;
-//    }
-//
-//    return newSID;
-//
-//} /* GetNextSID */
-
-
-/* ------------------------------------------------------------------------
    Name -           SemaphoreInit
    Purpose -        Initializes Sem Table Entry
    Parameters -     index:  semaphore location in SemTable
@@ -191,11 +164,11 @@ void SemaphoreInit(int index, short sid) {
 
     /*** Clear out SemTable Entry ***/
     pSem->status = STATUS_EMPTY;
-    pSem->count = -1;
     pSem->mutex = -1;
     pSem->sid = -1;
+    pSem->mboxID = -1;
 
-    InitializeList(NULL, &pSem->WaitingSems); //Slot List
+    InitializeList(&pSem->blockedProcs, NULL); //Slot List
 
 } /* SemaphoreInit */
 
@@ -208,11 +181,12 @@ void SemaphoreInit(int index, short sid) {
    Parameters -     newStatus:  New status being assigned
                     sid:        unique semaphore ID
                     newMutex:
-                    newCount:
+                    newMboxID:
+                    newValue:
    Returns -        none
    Side Effects -   Process added to ProcessTable
    ----------------------------------------------------------------------- */
-void AddToSemTable(int sid, int newMutex, int newStatus, int newCount) {
+void AddToSemTable(int sid, int newMutex, int newStatus, int newMboxID, int newValue) {
 
     /*** Function Initialization ***/
     int index = GetProcIndex(sid);
@@ -222,8 +196,9 @@ void AddToSemTable(int sid, int newMutex, int newStatus, int newCount) {
     pSem->sid = sid;
     pSem->mutex = newMutex;
     pSem->status = newStatus;
-    pSem->count = newCount;
-    InitializeList(NULL, &pSem->WaitingSems);   //Waiting List
+    pSem->mboxID = newMboxID;
+    pSem->value = newValue;
+    InitializeList(&pSem->blockedProcs, NULL);   //Waiting List
 
 } /* AddToSemTable */
 
