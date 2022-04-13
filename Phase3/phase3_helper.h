@@ -11,7 +11,7 @@
 #include "lists.h"
 
 /** ------------------------- Constants ----------------------------------- **/
-#define DEBUG3 1
+#define DEBUG3 0
 
 #define STATUS_EMPTY        0
 #define STATUS_RUNNING      1
@@ -29,7 +29,6 @@ typedef struct usr_proc_struct usr_proc_struct;
 typedef struct usr_proc_struct * usr_proc_ptr;
 typedef struct procQueue procQueue;
 typedef struct procList * proc_ptr;
-typedef struct semQueue semQueue;
 
 /* Structures for Processes */
 typedef struct  procList{
@@ -52,7 +51,7 @@ struct usr_proc_struct {
     short               pid;                  	    //Process ID
     unsigned int        stackSize;                  //Stack Size
     int                 priority;                   //Priority
-    int                 mboxID;                    //Private MailboxID
+    int                 mboxID;                     //Private MailboxID
     int                 status;                     //Status
     int                 parentPID;                  //Parent PID
     procQueue           children;                   //List of Children
@@ -62,9 +61,7 @@ struct usr_proc_struct {
 /* Structures for Semaphores */
 struct semaphore_struct {
     int sid;                           // ID of semaphore
-    int mutex;                         // semaphore mutex
     int status;                        // semaphore status
-    int mboxID;                        // private mbox ID
     int value;                         // value of semaphore
     procQueue blockedProcs;            // list of blocked processes
 };
@@ -87,32 +84,32 @@ union psr_values {
 /* --------------------- External lists.c Prototypes --------------------- */
 /** General, Multi-use **/
 /* Initializes Linked List */
-void InitializeList(procQueue *pProc, semQueue *pSem);
+extern void InitializeList(procQueue *pProc);
 /* Check if Proc List or Sem list is Full | Returns True when Full */
-bool ListIsFull(const procQueue *pProc, const semQueue *pSem);
+extern bool ListIsFull(const procQueue *pProc);
 /* Check if Proc List or Sem list is Empty | Returns True when Empty */
-bool ListIsEmpty(const procQueue *pProc, const semQueue *pSem);
+extern bool ListIsEmpty(const procQueue *pProc);
 
 /** Process Lists **/
-/* Add Process to Specified Process Queue | Returns 0 on Sucess */
+/* Add Process to Specified Process Queue | Returns 0 on Success */
 extern int AddProcessLL(usr_proc_ptr pProc, procQueue * pq);
 /* Remove Process from Process Queue | Returns PID of Removed Process*/
 extern int RemoveProcessLL(int pid, procQueue * pq);
-/* Copies a Process to another Queue | Returns Pointer to Copied Process */
-//extern proc_ptr CopyProcessLL(int pid, procQueue * sourceQueue, procQueue * destQueue);
-/* Finds Process in Process Queue | Returns Pointer to Found Process */
-//extern proc_ptr FindProcessLL(int pid, procQueue * pq);
 
 /* --------------------- External tables.c Prototypes --------------------- */
 /** Process Table **/
-/* Finds Next Available pid | Returns Next pid */
-extern int GetNextPID();
 /* Initializes Proc Table Entry */
 extern void ProcessInit(int index, short pid);
 /* Adds Process to Table */
-extern void AddToProcTable(int newStatus, char name[], int pid, int (* startFunc) (char *), char startArg, int stackSize, int priority);
+extern void AddToProcTable(int newStatus,
+                           char name[],
+                           int pid,
+                           int (* startFunc) (char *),
+                           char * startArg,
+                           int stackSize,
+                           int priority);
 /* Gets Mailbox index from id | Returns Corresponding index */
 extern int GetProcIndex(int pid);
 
-//end external function prototypes
+/** -------------------- END of External Prototypes -------------------- **/
 #endif

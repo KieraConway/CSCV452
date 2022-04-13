@@ -18,23 +18,15 @@
 #include <libuser.h>
 #include <usyscall.h>
 #include "phase3_helper.h"
+#include "usloss/include/phase2.h"
 
 /** ------------------------------ Prototypes ------------------------------ **/
 
-int start2(char *); 
+/*** Start Functions ***/
+int start2(char *);
 extern int start3();
 
-/*** Functions Brought in From Phase 1 ***/
-void check_kernel_mode(const char *functionName);
-void DebugConsole3(char *format, ...);
-
-/*** Others ***/
-void nullsys3(sysargs *args);
-void setUserMode();
-static int spawn_launch(char *arg);
-void syscall_Handler(sysargs *args);
-
-/*** Provided Kernel Mode Functions **/
+/*** Kernel Mode Functions **/
 int kerSpawn(char *name,
                int (*func)(char *),
                char *arg,
@@ -46,11 +38,8 @@ int kerSemCreate(int init_value);
 int kerSemP(int semaphore);
 int kerSemV(int semaphore);
 int kerSemFree(int semaphore);
-//void kerGetTimeOfDay(int *time);
-//void kerCPUTime(int *time);
-//void kerGetPID(int *pid);
 
-/*** Needed for sys_vec ***/
+/*** sys_vec Functions ***/
 static void sysSpawn(sysargs *args);
 static void sysWait(sysargs *args);
 static void sysTerminate(sysargs *args);
@@ -62,16 +51,25 @@ static void sysGetTimeOfDay(sysargs *args);
 static void sysCPUTime(sysargs *args);
 static void sysGetPID(sysargs *args);
 
+/*** Functions Brought in From Phase 1 ***/
+void check_kernel_mode(const char *functionName);
+void DebugConsole3(char *format, ...);
+
+/*** Others ***/
+void nullsys3(sysargs *args);
+void setUserMode();
+static int spawn_launch(char *arg);
+
 /** ------------------------------ Globals ------------------------------ **/
 
 /* Flags */
 int debugFlag = 1;
 
 /* General Globals */
-int start2Pid = 0;           //start2 PID
+int start2Pid = 0;      //start2 PID
 
 /* Process Globals */
-usr_proc_struct UsrProcTable[MAXPROC];  //Process Table
+usr_proc_struct UsrProcTable[MAXPROC];      //Process Table
 int totalProc;           //total Processes
 unsigned int nextPID;    //next process id
 
@@ -83,11 +81,13 @@ unsigned int nextSID;    //next semaphore id
 /** ----------------------------- Functions ----------------------------- **/
 
 /* ------------------------------------------------------------------------
-  Name -           start2
-  Purpose -
-  Parameters -     *arg:   default arg passed by fork1
-  Returns -        0:      indicates normal quit
-  Side Effects -   lots since it initializes the phase3 data structures.
+  Name -            start2
+  Purpose -         Phase 3 entry point. Initializes UsrProcTable,
+                    SemaphoreTable, and sys_vec and creates process
+                    mailboxes
+  Parameters -      *arg:   default arg passed by fork1
+  Returns -         0:      indicates normal quit
+  Side Effects -    lots since it initializes the phase3 data structures.
   ----------------------------------------------------------------------- */
 int start2(char *arg) {
     /*** Function Initialization ***/
@@ -105,6 +105,11 @@ int start2(char *arg) {
     totalProc = 0;
     totalSem = 0;
     start2Pid = getpid();
+
+    /*** Create Process Mailboxes ***/
+    for(int i=0; i< MAXPROC ; i++){
+        UsrProcTable[i].mboxID = MboxCreate(1,4);
+    }
 
     /*** Initialize sys_vec ***/
     for (int i = 0; i < MAXSYSCALLS; i++) {
@@ -152,20 +157,9 @@ int start2(char *arg) {
      * return to the user code that called Spawn.
      */
 
-    /*** Add to ProcTable ***/
-//    AddToProcTable(STATUS_READY,
-//                   "start2",
-//                   getpid(),
-//                   0,
-//                   NULL,
-//                   0,
-//                   5);
-//TODO: do we need to at any time to reference the process in the list?
-
-
+    /*** Create and Run start3 ***/
     pid = kerSpawn("start3", start3, NULL, 4*USLOSS_MIN_STACK, 3);
     pid = kerWait(&status);
-//    kerTerminate(0);
 
     return 0;
 
@@ -173,11 +167,19 @@ int start2(char *arg) {
 
 
 /* ------------------------------------------------------------------------
-  Name -           Spawn
-  Purpose -
-  Parameters -
-  Returns -
-  Side Effects -
+  Name -            sysSpawn [spawn]
+  Purpose -         Spawns user level process
+  Parameters -      systemArgs *args
+                        args->arg1: address of the function to spawn
+                        args->arg2: parameter passed to spawned function
+                        args->arg3: stack size (in bytes)
+                        args->arg4: priority
+                        args->arg5: process name
+  Returns -         void, sets arg values
+                    args->arg1:    -1:  process could not be created
+                    args->arg4:    -1:  illegal values are given as input
+                                    0:  otherwise.
+  Side Effects -    calls kerSpawn
   ----------------------------------------------------------------------- */
 static void sysSpawn(sysargs *args) {
     /*** Function Initialization ***/
@@ -204,25 +206,24 @@ static void sysSpawn(sysargs *args) {
     }
 
     /*** Get Functions Arguments ***/
-    func      = args->arg1;
+    /* Get Address of Process to Spawn */
+    func = args->arg1;
 
+    /* Get parameters of Process */
     if (args->arg2) {
         strcpy(arg, args->arg2);
     }
-//    else {
-//        strcpy(arg, '\0');
-//    }
-//todo: delete if not needed
 
+    /* Get Stack Size of Process */
     stackSize = (int) args->arg3;
+
+    /* Get Priority of Process */
     priority  = (int) args->arg4;
+
+    /* Get Name of Process */
     if (args->arg5) {
         strcpy(name, args->arg5);
     }
-//    else {
-//        strcpy(arg, '\0');
-//    }
-//todo: delete if not needed
 
     /*** Error Check: Invalid Values ***/
     /* Out-of-range Priorities */
@@ -271,32 +272,28 @@ static void sysSpawn(sysargs *args) {
     /*** Switch into User Mode ***/
     setUserMode();
 
+    return;
+
 } /* sysSpawn */
 
 
 /* ------------------------------------------------------------------------
-   Name -           kerSpawn
-   Purpose -        Create a user-level process
-   Parameters -     name:       character string containing process’s name
+  Name -            kerSpawn    [spawnReal]
+  Purpose -         Create a user-level process
+                    SemaphoreTable, and sys_vec and creates process
+                    mailboxes
+  Parameters -      name:       character string containing process’s name
                     func:       address of the function to spawn
                     arg:        parameter passed to spawned function
                     stack_size: stack size (in bytes)
                     priority:   priority
-   Returns -        >0: PID of the newly created process
+  Returns -         >0: PID of the newly created process
                     -1: Invalid Parameters Given,
                         Process Could not be Created
                      0: Otherwise
-   Side Effects -   none
-   ----------------------------------------------------------------------- */
+  Side Effects -    calls fork1 and updates UsrProcTable and process lists
+  ----------------------------------------------------------------------- */
 int kerSpawn(char *name, int (*func)(char *), char *arg, int stack_size, int priority) {
-
-    //TODO: FUNCTION NOTES
-    //
-    //If the spawned function returns, it should have the same effect as calling Terminate.
-    //Then synchronize with the child using a mailbox
-    //result = MboxSend(ProcTable[kid_location].start_mbox,
-    //       &my_location, sizeof(int));
-    //more to add
 
     /*** Function Initialization ***/
     int kidPID;
@@ -314,14 +311,14 @@ int kerSpawn(char *name, int (*func)(char *), char *arg, int stack_size, int pri
     /*** Create Child Process ***/
     kidPID = fork1(name, spawn_launch, arg, stack_size, priority);
 
-    /* Error Check: Valid PID */
+    /*** Error Check: Valid PID ***/
     if(kidPID < 0){
         DebugConsole3("%s : Fork Failure\n", __func__);
         return -1;
     }
 
     /*** Update Processes ***/
-    /* Add Kid to Process Table */
+    /** Add Kid to Process Table **/
     AddToProcTable(STATUS_READY,
                    name,
                    kidPID,
@@ -330,37 +327,28 @@ int kerSpawn(char *name, int (*func)(char *), char *arg, int stack_size, int pri
                    stack_size,
                    priority);
 
-    /* Add Kid to Parent Child List */
+    /** Add Process to Parent Child List **/
+    /* Create Pointer to Child */
     kidIndex = GetProcIndex(kidPID);    //find kid index
     pKid = &UsrProcTable[kidIndex];         //create pointer to kid
 
+    /* Add to Parent's Child List */
     if(pKid->parentPID > start2Pid){                //if kid has valid Parent
         pCur = &UsrProcTable[curIndex];
         AddProcessLL(pKid, &pCur->children);
     }
 
-    /*** Create Mailbox ***/
-    if(pKid->mboxID == -1){
-        pKid->mboxID = MboxCreate(0, sizeof(int));
+    /*** Synchronize with Child Process ***/
+    result = MboxCondSend(pKid->mboxID, NULL, 0);
 
-        /** Error Check: Mailbox Creation Failure **/
-        if (pKid->mboxID < 0){
-            DebugConsole3("%s : Mailbox creation failure for process %d.\n",
-                          __func__, kidPID);
-            return -1;
-        }
-    }
-
-    result = MboxSend(pKid->mboxID, NULL, 0);
-
-    /*** Check Send Result ***/
+    /*** Check Conditional Send Result ***/
     if (result == -1) {
-        DebugConsole3("%s : Illegal arguments used within MboxSend().\n",
+        DebugConsole3("%s : Illegal arguments used within MboxCondSend().\n",
                       __func__);
         return -1;
     }
     else if (result == -3) {
-        DebugConsole3("%s : Process was zapped or released while blocked.\n",
+        DebugConsole3("%s : Process was zapped or mailbox was released while the process was blocked.\n",
                       __func__);
         return -1;
     }
@@ -371,11 +359,103 @@ int kerSpawn(char *name, int (*func)(char *), char *arg, int stack_size, int pri
 
 
 /* ------------------------------------------------------------------------
-  Name -           sysWait
-  Purpose -
-  Parameters -
-  Returns -
-  Side Effects -
+  Name -            spawn_launch
+  Purpose -         Executes process passed to sysSpawn
+  Parameters -      arg:    function argument
+  Returns -          0: Success
+                    -1: Illegal arguments used within MboxSend(),
+                        Sent message exceeds max size,
+                        Process was zapped,
+                        mailbox was released while process was blocked
+  Side Effects -    Provides process error checking, synchronization,
+                    function execution, and termination
+  ----------------------------------------------------------------------- */
+static int spawn_launch(char *arg) {
+    /*** Function Initialization ***/
+    int my_location;
+    int result;
+    usr_proc_ptr pProc;
+
+    /*** Check for Kernel Mode ***/
+    check_kernel_mode(__func__);
+
+    /*** Create Current Pointer ***/
+    my_location = getpid() % MAXPROC;
+    pProc = &UsrProcTable[my_location];
+
+    /*** Error Check: Process Not on ProcTable ***/
+    if (pProc->pid != getpid()) {
+        int mailboxID = MboxCreate(0, 0);
+        UsrProcTable[my_location].mboxID = mailboxID;
+        result = MboxReceive(mailboxID, NULL, 0);
+
+        /*** Error Check: MboxReceive Return Value ***/
+        if (result == -1) {
+            DebugConsole3("%s : Illegal arguments used within MboxReceive() or message sent exceeds max size.\n",
+                          __func__);
+            return -1;
+        }
+        else if (result == -3) {
+            DebugConsole3("%s : Process was zapped or mailbox was released while the process was blocked.\n",
+                          __func__);
+            return -1;
+        }
+    }
+    else{
+        /*** Synchronize with Parent Process ***/
+        result = MboxReceive(pProc->mboxID, 0, 0);
+
+        /*** Error Check: MboxReceive Return Value ***/
+        if (result == -1) {
+            DebugConsole3("%s : Illegal arguments used within MboxReceive() or message sent exceeds max size.\n",
+                          __func__);
+            return -1;
+        }
+        else if (result == -3) {
+            DebugConsole3("%s : Process was zapped or mailbox was released while the process was blocked.\n",
+                          __func__);
+            return -1;
+        }
+    }
+
+    UsrProcTable[my_location].status = STATUS_READY; // update status
+
+    /*** Get Start Function and Arguments ***/
+    if (!is_zapped()) {
+        setUserMode();
+
+        if (*arg == -1 || *arg == 0) {
+            result = pProc->startFunc(NULL);
+        }
+        else {
+            result = pProc->startFunc(pProc->startArg);
+        }
+
+        Terminate(result);
+    }
+    else {
+        kerTerminate(0);
+    }
+
+    /*** Error Check: Termination Failure ***/
+    DebugConsole3("%s : Termination Failure.\n", __func__);
+
+    return 0;
+
+} /* spawn_launch */
+
+
+/* ------------------------------------------------------------------------
+  Name -            sysWait  [wait]
+  Purpose -         Wait for child process to terminate
+  Parameters -      systemArgs *args
+  Returns -         void, sets arg values
+                    args->arg1:     pid of terminating child
+                    args->arg2:     termination status of the child
+                    args->arg4: -1: process has no children
+                                 0: otherwise.
+  Side Effects -    Process terminates if zapped while waiting
+                    Calls kerWait
   ----------------------------------------------------------------------- */
 static void sysWait(sysargs *args) {
     /*** Function Initialization ***/
@@ -385,6 +465,7 @@ static void sysWait(sysargs *args) {
     /*** Check for Kernel Mode ***/
     check_kernel_mode(__func__);
 
+    /*** Call Wait ***/
     pid = kerWait(&status);
 
     /*** Check if Current was Zapped ***/
@@ -403,16 +484,20 @@ static void sysWait(sysargs *args) {
     /*** Switch into User Mode ***/
     setUserMode();
 
+    return;
+
 } /* sysWait */
 
 
 /* ------------------------------------------------------------------------
-Name -           kerWait
-Purpose -
-Parameters -
-Returns -
-Side Effects -
------------------------------------------------------------------------ */
+  Name -            kerWait [waitReal]
+  Purpose -         Called by sysWait, updates UsrProcTable and calls join
+  Parameters -      status:     termination status of the child
+  Returns -         >0:     PID of quitting child
+                    -1:     Process was zapped in Join
+		            -2:     Process has no children
+  Side Effects -    none, value returned to sysWait
+  ----------------------------------------------------------------------- */
 int kerWait(int *status) {
     /*** Function Initialization ***/
     int index = 0;
@@ -420,29 +505,23 @@ int kerWait(int *status) {
     /*** Check for Kernel Mode ***/
     check_kernel_mode(__func__);
 
+    /*** Update Process Status ***/
     index = getpid() % MAXPROC;
     UsrProcTable[index].status == STATUS_JOIN_BLOCK;
 
     return join(status);
 
-//    if (strt2 == 0){
-//        index = getpid() % MAXPROC;
-//        UsrProcTable[index].status == STATUS_JOIN_BLOCK;
-//        return join(status);
-//    }
-//    else {
-//        strt2 = 0;
-//    }
-
 } /* kerWait */
 
 
 /* ------------------------------------------------------------------------
-  Name -           sysTerminate
-  Purpose -
-  Parameters -
-  Returns -
-  Side Effects -
+  Name -            sysTerminate [terminate]
+  Purpose -         Terminates invoking process and all of its children
+                    and synchronizes with its parent’s Wait system call
+  Parameters -      systemArgs *args
+                        args->arg1: termination code for the process
+  Returns -         none
+  Side Effects -    Uses status from args->arg1 to call kerTerminate
   ----------------------------------------------------------------------- */
 static void sysTerminate(sysargs *args) {
     /*** Function Initialization ***/
@@ -451,104 +530,124 @@ static void sysTerminate(sysargs *args) {
     /*** Check for Kernel Mode ***/
     check_kernel_mode(__func__);
 
+    /*** Get Status ***/
     status = (int) args->arg1;
+
+    /*** Call Terminate ***/
     kerTerminate(status);
 
     /*** Switch into User Mode ***/
     setUserMode();
 
+    return;
+
 } /* sysTerminate */
 
 
 /* ------------------------------------------------------------------------
-  Name -           kerTerminate
-  Purpose -
-  Parameters -
-  Returns -
-  Side Effects -
+  Name -            kerTerminate
+  Purpose -         Terminates invoking process and all of its children
+                    and synchronizes with its parent’s Wait system call
+  Parameters -      exit_code:  termination status of the child
+  Returns -         none
+  Side Effects -    Zaps remaining children, updates parent's child list,
+                    initializes UserProcTable slot, and calls quit
   ----------------------------------------------------------------------- */
 void kerTerminate(int exit_code) {
     /*** Function Initialization ***/
     int pid;
     int parentID;
-    usr_proc_ptr p_ptr, parent_ptr;
+    usr_proc_ptr pChild, pCurrent, pParent;
 
     /*** Check for Kernel Mode ***/
     check_kernel_mode(__func__);
 
-    /*** Get pid of current running process and zap all children ***/
-    p_ptr = &UsrProcTable[getpid() % MAXPROC];
+    /*** Zap Children ***/
+    /* Get Current PID */
+    pCurrent = &UsrProcTable[getpid() % MAXPROC];
 
-    while (p_ptr->children.total > 0) {
-        pid = RemoveProcessLL(p_ptr->children.pHeadProc->pProc->pid, &p_ptr->children);
+    /* Check for Remaining Children */
+    while (pCurrent->children.total > 0) {
+
+        /* Remove Child From List */
+        pid = RemoveProcessLL(pCurrent->children.pHeadProc->pProc->pid,
+                              &pCurrent->children);                     //remove child from list
+        pChild = &UsrProcTable[pid % MAXPROC];  //create pointer to child
+        pChild->parentPID = -1;                 //update child's parent PID
+
+        /* Zap Child */
         zap(pid);
     }
 
     /*** Remove child process from Parent List ***/
-    parentID = p_ptr->parentPID;
+    parentID = pCurrent->parentPID;
 
-    /** Find Parent Index **/
+    /* Find Parent Index */
     if (parentID > -1) {
-        parent_ptr = &UsrProcTable[parentID % MAXPROC];
-        RemoveProcessLL(p_ptr->pid, &parent_ptr->children);
+        pParent = &UsrProcTable[parentID % MAXPROC];
+        RemoveProcessLL(pCurrent->pid, &pParent->children);
     }
 
-    /** Clear out Child Proc Slot **/
-    ProcessInit(p_ptr->pid % MAXPROC, p_ptr->pid);
+    /* Clear out Child Proc Slot */
+    ProcessInit(pCurrent->pid % MAXPROC, pCurrent->pid);
 
+    /*** Terminate Process ***/
     quit(exit_code);
+
+    return;
 
 } /* kerTerminate */
 
 
 /* ------------------------------------------------------------------------
-  Name -           sysSemCreate
-  Purpose -
-  Parameters -
-  Returns -
-  Side Effects -
+  Name -            sysSemCreate [semCreate]
+  Purpose -         Creates a user-level semaphore
+  Parameters -      systemArgs *args
+                        args->arg1: initial semaphore value
+  Returns -         void, sets arg values
+                    args->arg1:    sid
+                    args->arg4:    -1:  no more semaphores are available
+                                    0:  otherwise.
+  Side Effects -    calls kerSemCreate
   ----------------------------------------------------------------------- */
 static void sysSemCreate(sysargs *args) {
     /*** Function Initialization ***/
-    int handle;
+    int value;
     int semaphore;
 
     /*** Check for Kernel Mode ***/
     check_kernel_mode(__func__);
 
-    handle = args->arg1;
+    /*** Get Semaphore Value ***/
+    value = (int) args->arg1;
 
-    semaphore = kerSemCreate(handle);
+    /*** Create Semaphore ***/
+    semaphore = kerSemCreate(value);
 
     /*** Pack output ***/
     args->arg1 = (void *) semaphore;
 
     /*** Check if initial value is negative or no more semaphores available ***/
-    if (semaphore == -1) {
-        args->arg4 = -1;
-    }
-    else {
-        args->arg4 = 0;
-    }
+    semaphore == -1 ? (args->arg4 = (void *) -1): (args->arg4 = (void *) 0);
 
     /*** Switch into User Mode ***/
     setUserMode();
 
+    return;
 
 } /* sysSemCreate */
 
 
 /* ------------------------------------------------------------------------
-  Name -           kerSemCreate
-  Purpose -
-  Parameters -
-  Returns -
-  Side Effects -
+  Name -            kerSemCreate
+  Purpose -         Creates a user-level semaphore
+  Parameters -      init_value: initial semaphore value
+  Returns -         sid:        semaphore id
+  Side Effects -    creates semaphore and updates SemaphoreTable
   ----------------------------------------------------------------------- */
 int kerSemCreate(int init_value) {
     /*** Function Initialization ***/
     int sid;
-    int mbox;
 
     /*** Check for Kernel Mode ***/
     check_kernel_mode(__func__);
@@ -560,7 +659,7 @@ int kerSemCreate(int init_value) {
     }
 
     /*** Error Check: Verify Semaphores are available ***/
-    if (totalSem > MAXSEMS) {
+    if (totalSem >= MAXSEMS) {
         DebugConsole3("%s: No more semaphores are available...\n", __func__);
         return -1;
     }
@@ -573,11 +672,11 @@ int kerSemCreate(int init_value) {
         }
     }
 
-    totalSem++; // Increment total semaphores
-    mbox = MboxCreate(0, sizeof(int)); // get mbox for semaphore
+    /*** Update Global Values ***/
+    totalSem++;
 
     /*** Add Semaphore to Table ***/
-    AddToSemTable(sid, 0, SEM_READY, mbox, 1);
+    AddToSemTable(sid, SEM_READY, init_value);
 
     return sid;
 
@@ -585,11 +684,14 @@ int kerSemCreate(int init_value) {
 
 
 /* ------------------------------------------------------------------------
-  Name -           sysSemV [SemV]
-  Purpose -
-  Parameters -
-  Returns -
-  Side Effects -
+  Name -            sysSemV [SemV]
+  Purpose -         Performs a ”V” operation on a semaphore; Increment
+  Parameters -      systemArgs *args
+                        args->arg1:     semaphore handle (sid)
+  Returns -         void, sets arg values
+                    args->arg4:    -1:  semaphore handle is invalid
+                                    0:  otherwise
+  Side Effects -    Calls kerSemV
   ----------------------------------------------------------------------- */
 static void sysSemV(sysargs *args) {
     /*** Function Initialization ***/
@@ -598,81 +700,13 @@ static void sysSemV(sysargs *args) {
     /*** Check for Kernel Mode ***/
     check_kernel_mode(__func__);
 
-    handler = args->arg1;
+    /*** Get Semaphore Handler ***/
+    handler = (int) args->arg1;
 
+    /*** Error Check: Invalid Handler ***/
     if (SemaphoreTable[handler % MAXSEMS].sid != handler) {
-        args->arg4 = (void *) -1;
 
-        /*** Switch into User Mode ***/
-        setUserMode();
-
-    return;
-    }
-
-    args->arg4 = (void *) kerSemV(handler);
-
-    /*** Switch into User Mode ***/
-    setUserMode();
-
-} /* sysSemV */
-
-
-/* ------------------------------------------------------------------------
-  Name -           kerSemV
-  Purpose -
-  Parameters -
-  Returns -
-  Side Effects -
-  ----------------------------------------------------------------------- */
-int kerSemV(int semaphore) {
-    /*** Function Initialization ***/
-    sem_struct_ptr sem;
-    usr_proc_ptr proc;
-    int pid;
-    int headPID;
-
-    /*** Check for Kernel Mode ***/
-    check_kernel_mode(__func__);
-
-    sem = &SemaphoreTable[semaphore % MAXSEMS];
-
-    /*** There are Blocked Processes-> unblock head process ***/
-    if (sem->blockedProcs.total > 0) {
-
-        /*** Unblock Process from Blocked List ***/
-        pid = sem->blockedProcs.pHeadProc->pProc->pid;
-        headPID = RemoveProcessLL(pid, &sem->blockedProcs);
-        proc = &UsrProcTable[headPID % MAXPROC];
-
-        MboxSend(proc->mboxID, NULL, 0);
-    }
-    /*** Sem Value == 0-> increment ***/
-    else {
-        sem->value++; // increment semaphore value
-    }
-
-    return 0;
-
-} /* kerSemV */
-
-
-/* ------------------------------------------------------------------------
-  Name -           sysSemP [SemP]
-  Purpose -
-  Parameters -
-  Returns -
-  Side Effects -
-  ----------------------------------------------------------------------- */
-static void sysSemP(sysargs *args) {
-    /*** Function Initialization ***/
-    int handler;
-
-    /*** Check for Kernel Mode ***/
-    check_kernel_mode(__func__);
-
-    handler = args->arg1;
-
-    if (SemaphoreTable[handler % MAXSEMS].sid != handler) {
+        /*** Pack Output ***/
         args->arg4 = (void *) -1;
 
         /*** Switch into User Mode ***/
@@ -681,24 +715,126 @@ static void sysSemP(sysargs *args) {
         return;
     }
 
+    /*** Pack Output ***/
+    args->arg4 = (void *) kerSemV(handler);
+
+    /*** Switch into User Mode ***/
+    setUserMode();
+
+    return;
+
+} /* sysSemV */
+
+
+/* ------------------------------------------------------------------------
+  Name -            kerSemV [semV_real]
+  Purpose -         Performs a ”V” operation on a semaphore; Increment
+  Parameters -      semaphore:  sid
+  Returns -          0: Success
+                    -1: Illegal arguments used within MboxSend(),
+                        Process was zapped,
+                        mailbox was released while process was blocked
+  Side Effects -    Unblocks blocked processes and increments the
+                    semaphore value by one
+  ----------------------------------------------------------------------- */
+int kerSemV(int semaphore) {
+    /*** Function Initialization ***/
+    sem_struct_ptr sem;
+    usr_proc_ptr proc;
+    int pid;
+    int result;
+    int headPID;
+
+    /*** Check for Kernel Mode ***/
+    check_kernel_mode(__func__);
+
+    sem = &SemaphoreTable[semaphore % MAXSEMS]; // get semaphore
+
+    /*** There are Blocked Processes ***/
+    if (sem->blockedProcs.total > 0) {
+
+        /*** Unblock Process from Blocked List ***/
+        pid = sem->blockedProcs.pHeadProc->pProc->pid;
+        headPID = RemoveProcessLL(pid, &sem->blockedProcs);
+        proc = &UsrProcTable[headPID % MAXPROC];
+
+        /*** Unblock ***/
+        result = MboxSend(proc->mboxID, NULL, 0);
+
+        /*** Check Send Result ***/
+        if (result == -1) {
+            DebugConsole3("%s : Illegal arguments used within MboxSend().\n",
+                          __func__);
+            return -1;
+        }
+        else if (result == -3) {
+            DebugConsole3("%s : Process was zapped or mailbox was released while the process was blocked.\n",
+                          __func__);
+            return -1;
+        }
+    }
+    /*** Sem Value == 0 ***/
+    else {
+        sem->value++; // increment semaphore value
+    }
+
+    return 0;
+
+} /* kerSemV */
+
+/* ------------------------------------------------------------------------
+  Name -            sysSemP [SemP]
+  Purpose -         Performs a ”P” operation on a semaphore; Decrement
+  Parameters -      systemArgs *args
+                        args->arg1:     semaphore handle (sid)
+  Returns -         void, sets arg values
+                    args->arg4:    -1:  semaphore handle is invalid
+                                    0:  otherwise
+  Side Effects -    Calls kerSemP
+  ----------------------------------------------------------------------- */
+static void sysSemP(sysargs *args) {
+    /*** Function Initialization ***/
+    int handler;
+
+    /*** Check for Kernel Mode ***/
+    check_kernel_mode(__func__);
+
+    /*** Get Semaphore Handler ***/
+    handler = (int) args->arg1;
+
+    /*** Invalid Semaphore ***/
+    if (SemaphoreTable[handler % MAXSEMS].sid != handler) {
+        /*** Pack Output ***/
+        args->arg4 = (void *) -1;
+
+        /*** Switch into User Mode ***/
+        setUserMode();
+
+        return;
+    }
+
+    /*** Pack Output ***/
     args->arg4 = (void *) kerSemP(handler);
 
     /*** Switch into User Mode ***/
     setUserMode();
+
+    return;
 
 } /* sysSemP */
 
 
 /* ------------------------------------------------------------------------
   Name -            kerSemP [semP_real]
-  Purpose -         Decrements the semaphore count by one.
-
-  Parameters -      semaphore from SemTable
-                    arg1: semaphore handle (SID)
-  Returns -         arg4:
-                        -1 if semaphore handle is invalid
-                         0 otherwise
-  Side Effects -    Blocks process if the count is zero.
+  Purpose -         Performs a ”P” operation on a semaphore; Decrement
+  Parameters -      semaphore:  sid
+  Returns -          0: Success
+                    -1: Illegal arguments used within MboxSend(),
+                        Sent message exceeds max size,
+                        Process was zapped,
+                        mailbox was released while process was blocked
+  Side Effects -    Blocks processes and decrements the semaphore
+                    value by one
   ----------------------------------------------------------------------- */
 int kerSemP(int semaphore) {
     /*** Function Initialization ***/
@@ -709,20 +845,32 @@ int kerSemP(int semaphore) {
     /*** Check for Kernel Mode ***/
     check_kernel_mode(__func__);
 
-    sem = &SemaphoreTable[semaphore % MAXSEMS];
+    sem = &SemaphoreTable[semaphore % MAXSEMS]; // get semaphore
 
-    /*** Sem Count > 0 -> Decrement Count ***/
+    /*** Sem Count > 0 ***/
     if (sem->value > 0) {
         sem->value--; // decrement semaphore value
     }
-    /*** Sem Count <= 0 -> block ***/
+    /*** Sem Count <= 0 ***/
     else {
         /*** Add Process to Blocked List ***/
         proc = &UsrProcTable[getpid() % MAXPROC];
         AddProcessLL(proc, &sem->blockedProcs);
 
         /*** Block ***/
-        MboxReceive(proc->mboxID, NULL, 0);
+        result = MboxReceive(proc->mboxID, NULL, 0);
+
+        /*** Check Receive Result ***/
+        if (result == -1) {
+            DebugConsole3("%s : Illegal arguments used within MboxReceive() or message sent exceeds max size.\n",
+                          __func__);
+            return -1;
+        }
+        else if (result == -3) {
+            DebugConsole3("%s : Process was zapped or mailbox was released while the process was blocked.\n",
+                          __func__);
+            return -1;
+        }
 
         /*** Check if the Semaphore was Freed while Blocked ***/
         if (sem->status == FREEING) {
@@ -737,65 +885,88 @@ int kerSemP(int semaphore) {
 
 
 /* ------------------------------------------------------------------------
-  Name -           SemFree
-  Purpose -
-  Parameters -
-  Returns -
-  Side Effects -
+  Name -            sysSemFree   [SemFree]
+  Purpose -         Frees a semaphore
+  Parameters -      systemArgs *args
+                        args->arg1:     semaphore handle (sid)
+  Returns -         void, sets arg values
+                    args->arg4:    -1:  semaphore handle is invalid
+                                    1:  processes blocked on semaphore
+                                    0:  otherwise
+  Side Effects -    calls kerSemFree
   ----------------------------------------------------------------------- */
 static void sysSemFree(sysargs *args) {
+    /*** Function Initialization ***/
     int handler;
 
-    handler = args->arg1;
+    /*** Get Semaphore Handler ***/
+    handler = (int) args->arg1;
 
     if (SemaphoreTable[handler % MAXSEMS].sid != handler) {
+        /*** Pack Output ***/
         args->arg4 = (void *) -1;
-    return;
+        return;
     }
 
+    /*** Pack Output ***/
     args->arg4 = (void *) kerSemFree(handler);
 
+    /*** Switch into User Mode ***/
     setUserMode();
+
+    return;
 
 } /* sysSemFree */
 
 
 /* ------------------------------------------------------------------------
-  Name -           kersSemFree
-  Purpose -
-  Parameters -
-  Returns -
-  Side Effects -
+  Name -            kerSemFree
+  Purpose -         Frees a semaphore
+  Parameters -      semaphore:  sid
+  Returns -          0: Success
+                    -1: Illegal arguments used within MboxSend(),
+                        Process was zapped,
+                        mailbox was released while process was blocked
+                     1: processes blocked on semaphore
+  Side Effects -    handles semaphore block list
   ----------------------------------------------------------------------- */
 int kerSemFree(int semaphore) {
     /*** Function Initialization ***/
     sem_struct_ptr sem;
     usr_proc_ptr proc;
     int pid;
-    int headPID;
     int result;
 
-    sem = &SemaphoreTable[semaphore % MAXSEMS];
-    // remove processes from list
-    // if any are blocked -> arg4 = 1
-    // Terminate processes
-    // Clear out semaphore
+    sem = &SemaphoreTable[semaphore % MAXSEMS]; // get semaphore
 
-    // no blocked processes -> just empty semaphore in table
-    // blocked processes -> FREEING status -> empty status
+    /*** No Blocked Processes ***/
     if (sem->blockedProcs.total == 0) {
         SemaphoreInit(semaphore % MAXSEMS,sem->sid);
         totalSem--;
     }
+    /*** Blocked Processes Exist ***/
     else {
-        sem->status = FREEING;
+        sem->status = FREEING; // set status to freeing
 
         while (sem->blockedProcs.total > 0) {
             pid = sem->blockedProcs.pHeadProc->pProc->pid;
-            headPID = RemoveProcessLL(pid, &sem->blockedProcs);
+            RemoveProcessLL(pid, &sem->blockedProcs);
             proc = &UsrProcTable[pid % MAXPROC];
 
+            /*** Unblock to Terminate ***/
             result = MboxSend(proc->mboxID, NULL, 0);
+
+            /*** Check Receive Result ***/
+            if (result == -1) {
+                DebugConsole3("%s : Illegal arguments used within MboxSend().\n",
+                              __func__);
+                return -1;
+            }
+            else if (result == -3) {
+                DebugConsole3("%s : Process was zapped or mailbox was released while the process was blocked.\n",
+                              __func__);
+                return -1;
+            }
         }
 
         return 1;
@@ -807,11 +978,12 @@ int kerSemFree(int semaphore) {
 
 
 /* ------------------------------------------------------------------------
-  Name -           sysGetTimeOfDay
-  Purpose -
-  Parameters -
-  Returns -
-  Side Effects -
+  Name -            sysGetTimeOfDay
+  Purpose -         Obtains value of the time-of-day clock
+  Parameters -      systemArgs *args
+  Returns -         void, sets arg values
+                    args->arg1: time of day
+  Side Effects -    sets args->arg1 to time of day
   ----------------------------------------------------------------------- */
 static void sysGetTimeOfDay(sysargs *args) {
     /*** Function Initialization ***/
@@ -833,11 +1005,12 @@ static void sysGetTimeOfDay(sysargs *args) {
 
 
 /* ------------------------------------------------------------------------
-  Name -           sysCPUTime
-  Purpose -
-  Parameters -
-  Returns -
-  Side Effects -
+  Name -            sysCPUTime
+  Purpose -         Obtains the CPU time of the process
+  Parameters -      systemArgs *args
+  Returns -         void, sets arg values
+                    args->arg1: the process’ CPU time
+  Side Effects -    sets args->arg1 to the process’ CPU time
   ----------------------------------------------------------------------- */
 static void sysCPUTime(sysargs *args) {
     /*** Function Initialization ***/
@@ -859,11 +1032,12 @@ static void sysCPUTime(sysargs *args) {
 
 
 /* ------------------------------------------------------------------------
-  Name -           sysGetPID
-  Purpose -
-  Parameters -
-  Returns -
-  Side Effects -
+  Name -            sysGetPID
+  Purpose -         Obtains PID of the currently running process
+  Parameters -      systemArgs *args
+  Returns -         void, sets arg values
+                    args->arg1: pid
+  Side Effects -    sets args->arg1 to pid
   ----------------------------------------------------------------------- */
 static void sysGetPID(sysargs *args) {
     /*** Function Initialization ***/
@@ -883,8 +1057,7 @@ static void sysGetPID(sysargs *args) {
 
 } /* sysGetPID */
 
-
-/***---------------------------------------------- Phase 1 Functions -----------------------------------------------***/
+/* ----------------------------- Imported Phase 1 Functions ----------------------------- */
 
 /* ------------------------------------------------------------------------
    Name -           check_kernel_mode
@@ -893,8 +1066,7 @@ static void sysGetPID(sysargs *args) {
    Returns -        none
    Side Effects -   Halts if not kernel mode
    ----------------------------------------------------------------------- */
-void check_kernel_mode(const char *functionName)
-{
+void check_kernel_mode(const char *functionName) {
     union psr_values psrValue; /* holds caller's psr values */
 
     //DebugConsole3("check_kernel_node(): verifying kernel mode for %s\n", functionName);
@@ -921,10 +1093,8 @@ void check_kernel_mode(const char *functionName)
    Returns -        none
    Side Effects -   none
    ----------------------------------------------------------------------- */
-void DebugConsole3(char *format, ...)
-{
-    if (DEBUG3 && debugFlag)
-    {
+void DebugConsole3(char *format, ...) {
+    if (DEBUG3 && debugFlag) {
         va_list argptr;
         va_start(argptr, format);
         vfprintf(stdout, format, argptr);
@@ -934,15 +1104,14 @@ void DebugConsole3(char *format, ...)
 
 } /* DebugConsole2 */
 
-
-/***----------------------------------------------- Other Functions ------------------------------------------------***/
+/* ----------------------------- Miscellaneous Functions ----------------------------- */
 
 /* ------------------------------------------------------------------------
-  Name -           nullsys3
-  Purpose -
-  Parameters -
-  Returns -
-  Side Effects -
+  Name -            nullsys3
+  Purpose -         Error method to handle invalid syscalls
+  Parameters -      systemArgs *args
+  Returns -         none
+  Side Effects -    none
   ----------------------------------------------------------------------- */
 void nullsys3(sysargs *args) {
     console("nullsys(): Invalid syscall %d. Halting...\n", args->number);
@@ -952,81 +1121,15 @@ void nullsys3(sysargs *args) {
 
 
 /* ------------------------------------------------------------------------
-  Name -           setUserMode
-  Purpose -
-  Parameters -
-  Returns -
-  Side Effects -
+  Name -            setUserMode
+  Purpose -         Sets mode from kernel to user
+  Parameters -      none
+  Returns -         none
+  Side Effects -    user mode is set
   ----------------------------------------------------------------------- */
 void setUserMode() {
     psr_set(psr_get() & ~PSR_CURRENT_MODE);
 
 } /* setUserMode */
 
-
-/* ------------------------------------------------------------------------
-  Name -           spawn_launch
-  Purpose -
-  Parameters -
-  Returns -
-  Side Effects -
-  ----------------------------------------------------------------------- */
-static int spawn_launch(char *arg) {
-    /*** Function Initialization ***/
-    int my_location;
-    int result;
-    int (* start_func) (char *);
-    usr_proc_ptr pProc;
-
-    /*** Check for Kernel Mode ***/
-    check_kernel_mode(__func__);
-
-    /*** Create Current Pointer ***/
-    my_location = getpid() % MAXPROC;
-    pProc = &UsrProcTable[my_location];
-
-    /*** Error Check: Process Not Creation Not Completed ***/
-    if (UsrProcTable[my_location].pid != getpid()) {
-        UsrProcTable[my_location].mboxID = MboxCreate(0, sizeof(int));
-    }
-
-    /*** Sync with Parent Process ***/
-    MboxReceive(pProc->mboxID, 0, 0);
-
-    UsrProcTable[my_location].status = STATUS_READY; //todo is this status right?
-
-    // get start functions and argument
-    if (!is_zapped()) {
-        setUserMode();
-
-        if (*arg == -1 || *arg == 0) {
-            result = pProc->startFunc(NULL);
-        }
-        else {
-            result = pProc->startFunc(arg); //todo: why not pProc->startArg ?
-        }
-
-        Terminate(result);
-    }
-    else {
-        kerTerminate(0);
-    }
-
-    /*** Error Check: Termination Failure ***/
-    DebugConsole3("%s : Termination Failure.\n", __func__);
-
-    return 0;
-
-} /* spawn_launch */
-
-
-/* ------------------------------------------------------------------------
-  Name -           syscall_Handler
-  Purpose -
-  Parameters -
-  Returns -
-  Side Effects -
-  ----------------------------------------------------------------------- */
-void syscall_Handler(sysargs *args) {
-
-} /* syscall_Handler */
+/** ----------------------------- END of Functions ----------------------------- **/

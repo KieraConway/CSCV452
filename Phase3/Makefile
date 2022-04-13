@@ -36,7 +36,7 @@ clean:
 
 cleanAll:
 	rm -f test??.c
-	make clean
+	#make clean
 
 phase3.o:	sems.h phase3_helper.h tables.h lists.h
 	$(CC) $(CFLAGS) -c phase3.c
