@@ -1,9 +1,9 @@
 #ifndef DRIVER_H     //Header Guards
 #define DRIVER_H
 
-#define DEBUG4 1
+#include "phase4_helper.h"
 
-
+/** ------------------------ Typedefs and Structs ------------------------ **/
 typedef struct driver_proc * driver_proc_ptr;
 
 struct driver_proc {
@@ -36,19 +36,6 @@ union psr_values {
     unsigned int integer_part;
 };
 
-/** ------------------------ External Prototypes ------------------------ **/
-/* --------------------- External process.c Prototypes --------------------- */
-/** General **/
-
-
-/** ProcTable **/
-
-
-/** SleepProcTable **/
-/* Add Process to SleepProcTable | Returns 0 on Success */
-extern int AddToSleepProcTable(int seconds, int semSignal);
-
-/** -------------------- END of External Prototypes -------------------- **/
 #endif
 
 

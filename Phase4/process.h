@@ -7,16 +7,15 @@
 #include <stdio.h>
 #include <string.h>
 #include <usloss.h>
+#include "phase4_helper.h"
 #include "driver.h"
 #include "tables.h"
 #include "lists.h"
-
-/** ------------------------- Constants ----------------------------------- **/
-
+#include "usloss/include/usloss.h"  //Added for Clion Functionality
 
 /** ------------------------ Typedefs and Structs ------------------------ **/
 typedef struct p4proc_struct p4proc_struct;
-typedef struct p4proc_struct proc_struct;
+typedef struct p4proc_struct proc_struct;   //todo: need?
 typedef struct p4proc_struct * proc_ptr;
 typedef struct procQueue procQueue;
 typedef struct p4procList * proc_list_ptr;
@@ -40,37 +39,43 @@ typedef struct procQueue {
 } ProcQueue;
 
 struct p4proc_struct {
-    int pid;
-    int mboxId;
-    int blockSem;
-    int wakeTime;
-    int diskFirstTrack;
-    int diskFirstSec;
-    int diskSecs;
-    char *diskBuffer;
-    // lists?
-    device_request diskRequest; // found within usloss.h
+    int     pid;            //process ID
+    int     index;          //index Location
+    int     status;         //status
+    int     wakeTime;       //time to wake
+    int     mboxID;         //mailbox ID
+    int     blockSem;
+    int     signalingSem;
+    int     diskFirstTrack;
+    int     diskFirstSec;
+    int     diskSecs;
+    char    *diskBuffer;
+    // todo: lists?
+    device_request diskRequest;     //found within usloss.h
 };
 //end of Process structures
 
 /* Structures for Sleeping Processes */
 typedef struct sleepList {
-    sleep_proc_ptr pProc;
-    struct sleepList *pNextProc;
-    struct sleepList *pPrevProc;
+    sleep_proc_ptr      pProc;
+    struct sleepList    *pNextProc;
+    struct sleepList    *pPrevProc;
 } SleepList;
 
 typedef struct sleepQueue {
-    SleepList *pHeadProc;
-    SleepList *pTailProc;
-    int total;
+    SleepList   *pHeadProc;
+    SleepList   *pTailProc;
+    int         total;
 } SleepQueue;
 
-struct sleep_struct {
-    int pid;
-    int msecSleep;      //msec: milliseconds
-    int signalingSem;
-};
+//struct sleep_struct {
+//    int     pid;            //process ID
+//    int     index;          //index Location
+//    int     status;         //status
+//    int     mSecSleep;      //mSec: milliseconds    //todo: need?
+//    int     wakeTime;       //time to wake
+//    int     signalingSem;
+//};
 //end of Sleeping Process structures
 
 

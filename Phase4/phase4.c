@@ -8,6 +8,12 @@
     Kiera Conway
     Katelyn Griffith
 
+    TODO:
+
+        -  initialize SleepList in start
+        -  test list functions
+
+
 ------------------------------------------------------------------------ */
 
 #include <stdlib.h>
@@ -23,6 +29,14 @@
 #include <provided_prototypes.h>
 #include "driver.h"
 #include "process.h"
+#include "lists.h"
+#include "phase4_helper.h"
+
+/* Added for Clion Functionality */
+#include "usloss/include/phase1.h"
+#include "usloss/include/phase2.h"
+#include "usloss/include/usyscall.h"
+#include "usloss/include/provided_prototypes.h"
 
 /** ------------------------------ Prototypes ------------------------------ **/
 
@@ -59,22 +73,22 @@ static void DebugConsole4(char *format, ...);
 static void setUserMode();
 static void setKernelMode();
 static void sysCall(sysargs *args);
-int SecToMsec(int seconds);
+int SecToMSec(int seconds);
 
 /** ------------------------------ Globals ------------------------------ **/
 
 /*** Flags ***/
 int debugFlag = 0;
 
-static int running; /*semaphore to synchronize drivers and start3*/
+static int runningSID; /*semaphore to synchronize drivers and start3*/
 
 /*** Disk Globals ***/
-static struct driver_proc Driver_Table[MAXPROC];
-static int diskpids[DISK_UNITS];                    // disk processes
+static struct driver_proc DriverTable[MAXPROC];
+static int diskPIDs[DISK_UNITS];                    // disk processes
 
 /*** Process Globals ***/
-p4proc_struct ProcTable[MAXPROC];
-sleep_struct SleepProcTable[MAXPROC];
+p4proc_struct ProcTable[MAXPROC];    //Process Table
+procQueue SleepingProcs;             //Sleeping Processes List
 
 /** ----------------------------- Functions ----------------------------- **/
 
@@ -92,45 +106,56 @@ sleep_struct SleepProcTable[MAXPROC];
 int start3(char *arg)
 {
     /*** Function Initialization ***/
+    char termBuff[10];
     char name[128];
-    char termbuf[10];
     char buf[10];
-    int	i;
     int	clockPID;
-    int	pid;
     int	status;
+    int	pid;
 
     /*** Check for Kernel Mode ***/
     check_kernel_mode(__func__);
 
-    /* Assignment system call handlers */
+    /*** Assign System Call Handlers ***/
     sys_vec[SYS_SLEEP]     = sysCall;
     sys_vec[SYS_DISKREAD]  = sysCall;
     sys_vec[SYS_DISKWRITE] = sysCall;
     sys_vec[SYS_DISKSIZE]  = sysCall;
 
-    /* Initialize the phase 4 process table */
+    /*** Initialize Global Tables ***/
+    memset(ProcTable, 0, sizeof(ProcTable));
+    memset(SleepProcTable, 0, sizeof (SleepProcTable));
 
+    /*** Create Process Mailboxes ***/
+    for(int i=0; i< MAXPROC ; i++){
+        ProcTable[i].mboxID = MboxCreate(1,4);
+    }
 
-    /*
-     * Create clock device driver
-     * I am assuming a semaphore here for coordination.  A mailbox can
-     * be used instead -- your choice.
-     */
-    running = semcreate_real(0);
-    clockPID = fork1("Clock driver", ClockDriver, NULL, USLOSS_MIN_STACK, 2);
+    /*** Create Clock Device Driver ***/
+    /* Fork Clock Driver */
+    runningSID = semcreate_real(0);
+    clockPID = fork1("Clock Driver",
+                     ClockDriver,
+                     NULL,
+                     USLOSS_MIN_STACK,
+                     2);
 
+    /* Error Check: Valid Clock Driver Creation */
     if (clockPID < 0) {
-        console("start3(): Can't create clock driver\n");
+        console("%s : Can't create clock driver. Halting ...\n",
+                      __func__);
         halt(1);
     }
 
+    /* Add to ProcTable */
+    AddToProcTable(clockPID);
+
     /*
      * Wait for the clock driver to start. The idea is that ClockDriver
-     * will V the semaphore "running" once it is running.
+     * will V the semaphore "runningSID" once it is running.
      */
 
-    semp_real(running);
+    semp_real(runningSID);
 
     /*
      * Create the disk device drivers here.  You may need to increase
@@ -138,21 +163,21 @@ int start3(char *arg)
      * driver, and perhaps do something with the pid returned.
      */
 
-    for (i = 0; i < DISK_UNITS; i++) {
+    for (int i = 0; i < DISK_UNITS; i++) {
         sprintf(buf, "%d", i);
         sprintf(name, "DiskDriver%d", i);
 
-        diskpids[i] = fork1(name, DiskDriver, buf, USLOSS_MIN_STACK, 2);
+        diskPIDs[i] = fork1(name, DiskDriver, buf, USLOSS_MIN_STACK, 2);
 
-        if (diskpids[i] < 0) {
+        if (diskPIDs[i] < 0) {
             console("start3(): Can't create disk driver %d\n", i);
             halt(1);
         }
     }
 
     /*** Wait for all disk drivers to start ***/
-    for (i = 0; i < DISK_UNITS; i++) {
-        semp_real(running);
+    for (int i = 0; i < DISK_UNITS; i++) {
+        semp_real(runningSID);
     }
 
     /*
@@ -198,7 +223,7 @@ static int ClockDriver(char *arg) {
     /*
      * Let the parent know we are running and enable interrupts.
      */
-    semv_real(running);
+    semv_real(runningSID);
 
     /*** Set Kernel Mode ***/
     setKernelMode();
@@ -251,7 +276,7 @@ static int DiskDriver(char *arg) {
     /*
     * Let the parent know we are running and enable interrupts.
     */
-    semv_real(running);
+    semv_real(runningSID);
 
     /*** Set Kernel Mode ***/
     setKernelMode();
@@ -280,7 +305,7 @@ static int DiskDriver(char *arg) {
 
     //DebugConsole4("DiskDriver(%d): tracks = %d\n", unit, num_tracks[unit]);
 
-    //semv_real(running);
+    //semv_real(runningSID);
 
     return 0;
 
@@ -296,20 +321,30 @@ static int DiskDriver(char *arg) {
   Side Effects -
   ----------------------------------------------------------------------- */
 static int sleep(int seconds) {
+    /*** Function Initialization ***/
     int result = -1;
+
+    /*** Add Process to ProcTable ***/
+    AddToProcTable(getpid());
 
     /*** Error Check: Check for valid seconds ***/
     if (seconds > 0) {
 
         /* Change to Milliseconds */
-        SecToMsec(seconds);
+        int mSec = SecToMSec(seconds);
 
-        /* Add to Sleeping Proc Table */
-        AddToSleepProcTable();
+        /* Add to Sleeping List */
+        proc_ptr pCur = CreatePointer(getpid());
+        AddProcessLL(pCur, &SleepingProcs); //todo: test functionality
+
+        /* Block Process */
+        MboxReceive(pCur->mboxID, NULL, 0);
 
         result = 0;
     }
+
     /*** Error Check: If Process was zapped ***/
+    //todo
 
     return result;
 
@@ -490,7 +525,6 @@ static void sysCall(sysargs *args) {
   Returns -         milliseconds
   Side Effects -    none
   ----------------------------------------------------------------------- */
-int SecToMsec(int seconds) {
-
-    //todo
+int SecToMSec(int seconds) {
+    return (seconds * 1000);
 }
