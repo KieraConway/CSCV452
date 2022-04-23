@@ -7,6 +7,6 @@ Project List
 
 - [X]  Due 03/24/22  |   Programming Project Phase 2:  Message Passing and Interrupt Handling
 
-- [ ]  Due 04/04/22  |   Programming Project Phase 3:  User Process and System Call
+- [X]  Due 04/04/22  |   Programming Project Phase 3:  User Process and System Call
 
-- [ ]  Due --/--/22  |   Programming Project Phase 4:  Device Drivers and System Calls
+- [ ]  Due 05/05/22  |   Programming Project Phase 4:  Device Drivers and System Calls
