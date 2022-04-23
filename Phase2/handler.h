@@ -6,10 +6,6 @@
 #include <phase1.h>
 #include <phase2.h>
 #include "message.h"
-
-
-
-
 #include "handler.h"
 
 extern int debugFlag2;
