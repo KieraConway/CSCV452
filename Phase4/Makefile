@@ -2,9 +2,9 @@ TARGET=libphase4.a
 ASSIGNMENT=452phase4
 CC=gcc
 AR=ar
-COBJS= phase4.o libuser.o p1.o tables.o lists.o process.o
+COBJS= phase4.o libuser.o p1.o tables.o lists.o process.o phase4_helper.o
 CSRCS=${COBJS:.o=.c}
-HDRS= server.h tables.h lists.h process.h
+HDRS= server.h tables.h lists.h process.h phase4_helper.h
 INCLUDE = ./usloss/include
 CFLAGS = -Wall -g -I${INCLUDE} -I. -Wno-int-to-pointer-cast -Wno-pointer-to-int-cast
 
@@ -27,7 +27,7 @@ $(TESTS):	$(TARGET)
 clean:
 	rm -f $(COBJS) $(TARGET) test*.o term*.out p1.o $(TESTS) core
 
-phase4.o:	driver.h tables.h lists.h process.h
+phase4.o:	driver.h tables.h lists.h process.h phase4_helper.h
 
 #Needed for CLion IDE can be ignored
 all:
