@@ -1,4 +1,0 @@
-#ifndef PHASE_4_TABLES_H
-#define PHASE_4_TABLES_H
-
-#endif //PHASE_4_TABLES_H
