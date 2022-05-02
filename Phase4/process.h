@@ -7,18 +7,25 @@
 #include <stdio.h>
 #include <string.h>
 #include <usloss.h>
-#include "phase4_helper.h"
+
 #include "driver.h"
-#include "tables.h"
-#include "lists.h"
+
 #include "usloss/include/usloss.h"  //Added for Clion Functionality
 
+/** ------------------------- Constants ----------------------------------- **/
+#define DEBUG4      0
+
+#define EMPTY       0
+#define READY       1
+#define SLEEPING    2
+#define ZAPPED      3
+
 /** ------------------------ Typedefs and Structs ------------------------ **/
-typedef struct p4proc_struct p4proc_struct;
 typedef struct p4proc_struct proc_struct;   //todo: need?
+typedef struct p4proc_struct p4proc_struct;
 typedef struct p4proc_struct * proc_ptr;
 typedef struct procQueue procQueue;
-typedef struct p4procList * proc_list_ptr;
+typedef struct procList * proc_list_ptr;
 
 typedef struct sleep_struct sleep_struct;
 typedef struct sleep_struct * sleep_proc_ptr;

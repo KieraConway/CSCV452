@@ -1,23 +1,42 @@
 #ifndef DRIVER_H     //Header Guards
 #define DRIVER_H
 
-#include "phase4_helper.h"
-
 /** ------------------------ Typedefs and Structs ------------------------ **/
-typedef struct driver_proc * driver_proc_ptr;
+typedef struct driver_proc driver_proc;
+typedef struct driver_proc * driver_ptr;
+typedef struct diskQueue diskQueue;
+typedef struct diskList * disk_ptr;
+
+/* Structures for Disk */
+typedef struct diskList{
+    driver_ptr    pDisk;          //points to disk
+    struct diskList *pNextDisk; //points to next disk
+    struct diskList *pPrevDisk; //points to previous disk
+} DiskList;
+
+typedef struct diskQueue {
+    DiskList *pHeadDisk;        //points to disk list head
+    DiskList *pTailDisk;        //points to disk list tail
+    int total;                  //counts total disks in queue
+} DiskQueue;
 
 struct driver_proc {
-    driver_proc_ptr next_ptr;
-
-    int   wake_time;    /* for sleep syscall */
-    int   been_zapped;
-
+    int     wake_time;    /* for sleep syscall */
+    int     pid;
+    int     been_zapped;
+    int     mboxID;
+    int     blockSem;
     /* Used for disk requests */
-    int   operation;    /* DISK_READ, DISK_WRITE, DISK_SEEK, DISK_TRACKS */
-    int   track_start;
-    int   sector_start;
-    int   num_sectors;
-    void *disk_buf;
+    int     operation;    /* DISK_READ, DISK_WRITE, DISK_SEEK, DISK_TRACKS */
+    int     unit;
+    int     track_start;
+    int     current_track;      //current track location
+    int     sector_start;       
+    int     current_sector;     //current sector location
+    int     num_sectors;
+    void    *disk_buf;
+    void    *disk_offset;       //current buffer location (512i)
+
 
     //more fields to add
 
