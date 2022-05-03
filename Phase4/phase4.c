@@ -8,12 +8,6 @@
     Kiera Conway
     Katelyn Griffith
 
-    TODO:
-
-        -  initialize SleepList in start
-        -  test list functions
-
-
 ------------------------------------------------------------------------ */
 /* Standard Libraries */
 #include <stdlib.h>
@@ -31,8 +25,7 @@
 #include <usyscall.h>
 #include <provided_prototypes.h>
 
-/* Project Libraries */
-#include "driver.h"
+/* Project Headers */
 #include "process.h"
 
 /* Added for Clion Functionality */
@@ -53,16 +46,22 @@ static int DiskDriver(char *);
 
 /*** Kernel Mode Functions **/
 static int sleep(int seconds);
-static int diskRead(void *buffer, 
+static int diskIO(int operation, 
+                     void *buffer,
                      int sectors, 
                      int trackStart, 
                      int sectorStart, 
                      int unit);
-static int diskWrite(void *buffer, 
-                     int sectors, 
-                     int trackStart, 
-                     int sectorStart, 
-                     int unit);
+// static int diskRead(void *buffer, 
+//                      int sectors, 
+//                      int trackStart, 
+//                      int sectorStart, 
+//                      int unit);
+// static int diskWrite(void *buffer, 
+//                      int sectors, 
+//                      int trackStart, 
+//                      int sectorStart, 
+//                      int unit);
 static int diskSize(int unit,
                     int *sectorSize,
                     int *numSectors,
@@ -74,16 +73,16 @@ int GetIndex(int pid);
 void AddToProcTable(int pid);
 int RemoveFromProcTable(int pid);
 proc_ptr CreatePointer(int pid);
-void AddToDriverTable(int pid);
-driver_ptr CreateDriverPointer(int pid);
-int RemoveFromDriverTable(int pid);
+// void AddToDriverTable(int pid);
+// driver_ptr CreateDriverPointer(int pid);
+// int RemoveFromDriverTable(int pid);
 
 /*** List Functions **/
-void InitializeList(procQueue *pProc, diskQueue *pDisk);
-bool ListIsFull(const procQueue *pProc, const diskQueue *pDisk);
-bool ListIsEmpty(const procQueue *pProc, const diskQueue *pDisk);
-int AddToList(proc_ptr pProc, procQueue * pq, driver_ptr pDisk, diskQueue * dq);
-int RemoveFromList(int pid, procQueue * pq, diskQueue * dq);
+void InitializeList(procQueue *pProc);
+bool ListIsFull(const procQueue *pProc);
+bool ListIsEmpty(const procQueue *pProc);
+int AddToList(proc_ptr pProc, procQueue * pq);
+int RemoveFromList(int pid, procQueue * pq);
 
 /*** Functions Brought in From Phase 1 ***/
 static void check_kernel_mode(const char *functionName);
@@ -107,18 +106,20 @@ int totalDrivers = 0;
 int totalSleepingProcs = 0;
 int totalRequestProcs = 0;
 int startMailbox = 0;
+int currentTrack = 0;
+
 static int runningSID; /*semaphore to synchronize drivers and start3*/
 
 /*** Disk Globals ***/
-static struct driver_proc DriverTable[MAXPROC]; //todo:max proc or max units?
 static int diskPIDs[DISK_UNITS];          // disk processes for zapping
-diskQueue requestQueue[DISK_UNITS];       // waiting disk requests
+procQueue requestQueue[DISK_UNITS];       // waiting disk requests
 int trackAmount[DISK_UNITS];
 int diskSems[DISK_UNITS];
 
 /*** Process Globals ***/
 p4proc_struct ProcTable[MAXPROC];    //Process Table
 procQueue SleepingProcs;             //Sleeping Processes List
+int criticalMboxID;
 
 /** ----------------------------- Functions ----------------------------- **/
 
@@ -142,6 +143,7 @@ int start3(char *arg)
     int	clockPID;
     int	status;
     int	pid;
+    int msg = 0;
 
     /*** Check for Kernel Mode ***/
     check_kernel_mode(__func__);
@@ -154,17 +156,19 @@ int start3(char *arg)
 
     /*** Initialize Global Tables ***/
     memset(ProcTable, 0, sizeof(ProcTable));
-    memset(DriverTable, 0, sizeof(DriverTable));
 
     /*** Initialize Global Lists ***/
-    InitializeList(&SleepingProcs, NULL);
-    InitializeList(NULL, requestQueue);
+    InitializeList(&SleepingProcs);
+    for(int i = 0; i++; i < DISK_UNITS){
+        InitializeList(&requestQueue[i]);
+    }
 
     /*** Create Process Mailboxes ***/
     for (int i=0; i< MAXPROC ; i++) {
-        ProcTable[i].mboxID = MboxCreate(0,4);
+        ProcTable[i].mboxID = MboxCreate(0,sizeof(int));
         ProcTable[i].blockSem = semcreate_real(0);
     }
+    criticalMboxID = MboxCreate(1,sizeof(int));
 
     /*** Create Clock Device Driver ***/
     /* Fork Clock Driver */
@@ -207,9 +211,8 @@ int start3(char *arg)
         diskSems[i] = semcreate_real(0);
         diskPIDs[i] = fork1(name, DiskDriver, buf, USLOSS_MIN_STACK, 2);
 
-        
         startMailbox = pCur->mboxID;
-        MboxReceive(startMailbox, 0, 0);
+        MboxReceive(startMailbox, &msg, sizeof(int));
 
         if (diskPIDs[i] < 0) {
             console("start3(): Can't create disk driver %d\n", i);
@@ -217,10 +220,10 @@ int start3(char *arg)
         }
     }
 
-    /*** Wait for all disk drivers to start ***/
-    for (int i = 0; i < DISK_UNITS; i++) {
-        semp_real(runningSID);
-    }
+    // /*** Wait for all disk drivers to start ***/
+    // for (int i = 0; i < DISK_UNITS; i++) {
+    //     semp_real(runningSID);
+    // }
 
     /*
      * Create first user-level process and wait for it to finish.
@@ -246,7 +249,7 @@ int start3(char *arg)
 
     /* Disk Driver */
     for (int i = 0; i < DISK_UNITS; i++){
-        semv_real(ProcTable[diskPIDs[i]].blockSem);
+        semv_real(diskSems[i]);
         zap(diskPIDs[i]);
     }
 
@@ -279,6 +282,7 @@ static int ClockDriver(char *arg) {
     int curTime;
     int headPID;
     int awakerPID;
+    int msg = 0;
 
     /*
      * Let the parent know we are running and enable interrupts.
@@ -309,10 +313,10 @@ static int ClockDriver(char *arg) {
             headPID = SleepingProcs.pHeadProc->pProc->pid;
 
             /*** Remove Head Sleep Process from the Sleeping List ***/
-            awakerPID = RemoveFromList(headPID, &SleepingProcs, NULL);
+            awakerPID = RemoveFromList(headPID, &SleepingProcs);
 
             /*** Wake up Process ***/
-            MboxSend(ProcTable[awakerPID % MAXPROC].mboxID, NULL, 0);
+            MboxSend(ProcTable[awakerPID % MAXPROC].mboxID, &msg, sizeof(int));
         }
 
     }
@@ -343,8 +347,9 @@ static int DiskDriver(char *arg) {
     int status;
     int num_tracks;
     int sectorCount;
+    int msg = CRIT_EMPTY;    //used for Mbox functions
     device_request my_request;
-    driver_ptr current_req;
+    proc_ptr current_req;
     proc_ptr pCur = CreatePointer(getpid());
 
     DebugConsole4("DiskDriver(%d): started\n", unit);
@@ -357,8 +362,6 @@ static int DiskDriver(char *arg) {
     result = device_output(DISK_DEV, unit, &my_request);
     result = waitdevice(DISK_DEV, unit, &status);
 
-    MboxSend(startMailbox, 0, 0);    //unblock Start3
-
     /* Error Check: Invalid Output Result */
     if (result == DEV_INVALID){
         DebugConsole4("%s :Invalid device output result.\n", __func__);
@@ -367,7 +370,9 @@ static int DiskDriver(char *arg) {
     /*
     * Let the parent know we are running and enable interrupts.
     */
-    semv_real(runningSID);
+    MboxSend(startMailbox, &msg, sizeof(int));    //unblock Start3
+
+    //semv_real(runningSID);
 
     /* Initialize Arm Position to 0 */
     result = device_output(DISK_DEV, unit, &my_request);
@@ -381,15 +386,27 @@ static int DiskDriver(char *arg) {
     while (!is_zapped()) {
 
         /* Await Request */
-        semp_real(pCur->blockSem);
-        //TODO: mailbox if semp not working //MboxReceive(proc->mboxID, NULL, 0);
+        semp_real(diskSems[unit]);
+        //TODO: mailbox if semp not working //MboxReceive(proc->mboxID,  &msg, sizeof(int));
 
         /* Error Check: Check for Zapping Upon Return */
         if (is_zapped() || exitDriver == 1){
             return 0;
         }
 
-        //enter list mutex, list mutex as global
+        /* Enter Mutex for Critical Section */
+        MboxCondReceive(criticalMboxID, &msg, sizeof(int));
+        
+        if (msg == CRIT_EMPTY){
+            msg = CRIT_FULL;
+            MboxSend(criticalMboxID, &msg, sizeof(int));
+
+        }
+        else{
+            MboxReceive(criticalMboxID, &msg, sizeof(int));
+            msg = CRIT_FULL;
+            MboxSend(criticalMboxID, &msg, sizeof(int));
+        }
 
         /* Check Queue */
         if (requestQueue[unit].total == 0){
@@ -399,66 +416,80 @@ static int DiskDriver(char *arg) {
 
             /*** Grab Next Request ***/
             /* Take Next Request from Queue */
-            current_req = &requestQueue[unit].pHeadDisk->pDisk;
+            current_req = requestQueue[unit].pHeadProc->pProc;
 
             /* Remove Request from Queue */
-            RemoveFromList(NULL, NULL, &requestQueue[unit].pHeadDisk->pDisk);
+            RemoveFromList(current_req->pid, &requestQueue[unit]);
 
-            if (current_req->operation == DISK_READ){
+            /* Exit Mutex for Critical Section */
+            msg = CRIT_EMPTY;
+            MboxRelease(criticalMboxID);
+            criticalMboxID = MboxCreate(1,sizeof(int));
+            MboxSend(criticalMboxID, &msg, sizeof(int));
 
-                /** Inialize Starting Values **/
-                current_req->current_track = current_req->track_start;
-                current_req->current_sector = current_req->sector_start;
-                current_req->disk_offset = current_req->disk_buf;
+            /** Inialize Starting Values **/
+            current_req->currentTrack = current_req->trackStart;
+            current_req->currentSector = current_req->sectorStart;
+            current_req->diskOffset = current_req->diskBuf;
+            sectorCount = 0;
 
-                sectorCount = 0;
 
-                my_request.opr =  DISK_SEEK;
-                my_request.reg1 = current_req->current_track;
+            do {
+                /*** Verify Track ***/
+                if(currentTrack != current_req->trackStart){
 
-                result = device_output(DISK_DEV, unit, &my_request);
-                result = waitdevice(DISK_DEV, unit, &status);
-
-                do {
-                    /** Seek to Current Track **/
-                    my_request.opr = current_req->operation;
-                    my_request.reg1 = (void*) current_req->current_sector;
-                    my_request.reg2 = &current_req->disk_offset;
+                    /* Seek to Current Track */
+                    my_request.opr =  DISK_SEEK;
+                    my_request.reg1 = current_req->currentTrack;
 
                     result = device_output(DISK_DEV, unit, &my_request);
                     result = waitdevice(DISK_DEV, unit, &status);
 
-                    if (result != DEV_OK){
-                        console("DiskDriver %d: did not get DEV_OK on DISK_TRACKS call\n", unit);
-                        console("DiskDriver %d: is the file disk%d present???\n", unit, unit);
-                        halt(1);
+                    /* Error Check: Invalid Output Result */
+                    if (result == DEV_INVALID){
+                        DebugConsole4("%s :Invalid device output result.\n", __func__);
                     }
 
-                    if (++(current_req->current_sector) == DISK_TRACK_SIZE){
-                        current_req->current_sector = 0;
-                        current_req->current_track = (current_req->current_track + 1) %DISK_TRACK_SIZE;
+                    /* Update Global */    
+                    currentTrack = current_req->trackStart;
+                }
 
-                        my_request.opr =  DISK_SEEK;
-                        my_request.reg1 = current_req->current_track;
+                my_request.opr = current_req->operation;
+                my_request.reg1 = (void*) current_req->currentSector;
+                my_request.reg2 = current_req->diskOffset;
 
-                        result = device_output(DISK_DEV, unit, &my_request);
-                        result = waitdevice(DISK_DEV, unit, &status);
+                result = device_output(DISK_DEV, unit, &my_request);
+                result = waitdevice(DISK_DEV, unit, &status);
 
-                    }
+                if (result != DEV_OK){
+                    console("DiskDriver %d: did not get DEV_OK on DISK_TRACKS call\n", unit);
+                    console("DiskDriver %d: is the file disk%d present???\n", unit, unit);
+                    halt(1);
+                }
 
-                    current_req->disk_offset += 512;
+                if (++(current_req->currentSector) == DISK_TRACK_SIZE){
+                    current_req->currentSector = 0;
+                    current_req->currentTrack = (current_req->currentTrack + 1) %DISK_TRACK_SIZE;
+                    currentTrack = current_req->currentTrack;
 
-                    sectorCount++;
+                    // my_request.opr =  DISK_SEEK;
+                    // my_request.reg1 = current_req->current_track;
 
-                } while (sectorCount < current_req->num_sectors);
-            }
+                    // result = device_output(DISK_DEV, unit, &my_request);
+                    // result = waitdevice(DISK_DEV, unit, &status);
 
+                }
+                //else sector++
+                current_req->diskOffset += 512;
+                
+                sectorCount++;
+
+            } while (sectorCount < current_req->numSectors);
+
+            /* Wake - Inform Process that Request is Complete */
+            MboxSend(current_req->mboxID, &msg, sizeof(int));
         }
 
-        //exit list mutex
-
-        /* Wake */
-        semv_real(pCur->blockSem);
     }
 
 
@@ -488,6 +519,7 @@ static int sleep(int seconds) {
     int mSec;
     proc_ptr pCur;
     int curTime;
+    int msg = 0;
 
     /*** Add Process to ProcTable ***/
     AddToProcTable(getpid());
@@ -506,10 +538,10 @@ static int sleep(int seconds) {
 
         /* Add to Sleeping List */
         pCur = CreatePointer(getpid());
-        AddToList(pCur, &SleepingProcs, NULL, NULL); //TODO: test functionality
+        AddToList(pCur, &SleepingProcs); //TODO: test functionality
 
         /* Block Process */
-        MboxReceive(pCur->mboxID, NULL, 0);
+        MboxReceive(pCur->mboxID, &msg, sizeof(int));
 
         result = 0;
     }
@@ -525,79 +557,23 @@ static int sleep(int seconds) {
 } /* sleep */
 
 
-/* ------------------------------------------------------------------------
-  Name -            kerDiskRead
-  Purpose -         Reads one or more sectors to the disk:
-  Parameters -      buffer:         memory address to transfer to
-                    sectors:        number of sectors to read
-                    trackStart:     starting disk track number
-                    sectorStart:    starting disk sector number
-                    unit:           unit number from which to read
-  Returns -
-  Side Effects -
-  ----------------------------------------------------------------------- */
-static int diskRead(void *buffer, int sectors, int trackStart, int sectorStart, int unit){
-
-    /*** Error Check: Valid Parameters ***/
-    /* Verify Valid Track Start */
-    if (trackStart < 0 || trackStart > trackAmount[unit]){
-        DebugConsole4("%s : Illegal trackStart parameter.\n", __func__);
-        return -1;
-    }
-    /* Verify Valid Sector Start */
-    if (sectorStart < 0 || sectorStart  > DISK_TRACK_SIZE){
-        DebugConsole4("%s : Illegal sectorStart parameter.\n", __func__);
-        return -1;
-    }
-    /* Verify Unit */
-    if (unit < 0 || unit > (DISK_UNITS-1)){
-        DebugConsole4("%s : Illegal unit parameter.\n", __func__);
-        return -1;
-    }
-
-    /*** Add Process to Global ProcTable ***/
-    AddToProcTable(getpid());
-    proc_ptr pProc = CreatePointer(getpid());
-
-    /*** Add Request to Queue ***/
-    /* Add Driver to Global DriverTable */
-    AddToDriverTable(pProc->pid);
-    driver_ptr pDriver = CreateDriverPointer(pProc->pid);
-
-    /* Build the Request */
-    pDriver->pid = pProc->pid;
-    pDriver->been_zapped = 0;
-    pDriver->operation = DISK_READ;
-    pDriver->mboxID = pProc->mboxID;
-    pDriver->disk_buf = buffer;
-    pDriver->num_sectors = sectors;
-    pDriver->track_start = trackStart;
-    pDriver->sector_start = sectorStart;
-    pDriver->unit = unit;
-
-    /* Add Request to Queue */
-    AddToList(NULL, NULL, pDriver, &requestQueue);  
-
-    /*** Handle Blocking ***/
-    semv_real(diskSems[unit]);      //wake up disk
-
-    return 0;
-
-} /* diskRead */
 
 
 /* ------------------------------------------------------------------------
-  Name -            kerDiskWrite
-  Purpose -         Write one or more sectors to the disk
+  Name -            diskIO
+  Purpose -         Handles disk read/write
   Parameters -      buffer:         memory address to transfer to
-                    sectors:        number of sectors to write
+                    operation:      indicates disk operation
+                    sectors:        number of sectors to read/write
                     trackStart:     starting disk track number
                     sectorStart:    starting disk sector number
                     unit:           unit number from which to write
   Returns -
   Side Effects -
   ----------------------------------------------------------------------- */
-static int diskWrite(void *buffer, int sectors, int trackStart, int sectorStart, int unit){
+static int diskIO(int operation, void *buffer, int sectors, int trackStart, int sectorStart, int unit){
+    /*** Function Initialization ***/
+    int msg = CRIT_EMPTY;
 
     /*** Error Check: Valid Parameters ***/
     /* Verify Valid Track Start */
@@ -620,31 +596,50 @@ static int diskWrite(void *buffer, int sectors, int trackStart, int sectorStart,
     AddToProcTable(getpid());
     proc_ptr pProc = CreatePointer(getpid());
 
-    /*** Add Request to Queue ***/
-    /* Add Driver to Global DriverTable */
-    AddToDriverTable(pProc->pid);
-    driver_ptr pDriver = CreateDriverPointer(pProc->pid);
-
     /* Build the Request */
-    pDriver->pid = pProc->pid;
-    pDriver->been_zapped = 0;
-    pDriver->operation = DISK_WRITE;
-    pDriver->mboxID = pProc->mboxID;
-    pDriver->disk_buf = buffer;
-    pDriver->num_sectors = sectors;
-    pDriver->track_start = trackStart;
-    pDriver->sector_start = sectorStart;
-    pDriver->unit = unit;
+    pProc->been_zapped = 0;
+    pProc->operation = operation;
+    pProc->mboxID = pProc->mboxID;
+    pProc->diskBuf = buffer;
+    pProc->numSectors = sectors;
+    pProc->trackStart = trackStart;
+    pProc->sectorStart = sectorStart;
+    pProc->unit = unit;
+
+
+    /* Enter Mutex for Critical Section */
+    MboxCondReceive(criticalMboxID, &msg, sizeof(int));
+    
+    if (msg == CRIT_EMPTY){
+        msg = CRIT_FULL;
+        MboxSend(criticalMboxID, &msg, sizeof(int));
+
+    }
+    else{
+        MboxReceive(criticalMboxID, &msg, sizeof(int));
+        msg = CRIT_FULL;
+        MboxSend(criticalMboxID, &msg, sizeof(int));
+    }
 
     /* Add Request to Queue */
-    AddToList(NULL, NULL, pDriver, &requestQueue);
+    AddToList(pProc, &requestQueue[unit]);  
+
+    /* Exit Mutex for Critical Section */
+    msg = CRIT_EMPTY;
+    MboxRelease(criticalMboxID);
+    criticalMboxID = MboxCreate(1,sizeof(int));
+    MboxSend(criticalMboxID, &msg, sizeof(int));
 
     /*** Handle Blocking ***/
     semv_real(diskSems[unit]);      //wake up disk
 
+    //todo: wait for disk operation to complete
+    //TODO: maybe? send line 492 in IO
+    MboxReceive(pProc->mboxID, &msg, sizeof(int));
+
     return 0;
 
-} /* diskWrite */
+} /* diskRead */
 
 
 /* ------------------------------------------------------------------------
@@ -695,112 +690,67 @@ int GetIndex(int pid){
   Purpose -         Adds current process to ProcTable()
   Parameters -      pid:    Unique Process ID
   Returns -         none
-  Side Effects -    Process added to SleepProcTable
+  Side Effects -    Process added to ProcTable
   ----------------------------------------------------------------------- */
 void AddToProcTable(int pid){
     /*** Function Initialization ***/
     int index = GetIndex(pid);
     proc_ptr pProc = &ProcTable[index];
 
-    /*** Update ProcTable Entry ***/
-    pProc->index = index;       //Process Index
-    pProc->pid = pid;           //Process ID
-    pProc->status = READY;      //Process Status
+    /*** Verify Entry ***/
+    if (pid != pProc->pid){
+        /*** Update ProcTable Entry ***/
+        pProc->index = index;       //Process Index
+        pProc->pid = pid;           //Process ID
+        pProc->status = READY;      //Process Status
 
-    totalProcs++;
+        totalProcs++;
+    }
+
+    return;
 
 } /* AddToProcTable */
 
 
 /* ------------------------------------------------------------------------
-  Name -            AddToDriverTable
-  Purpose -         Adds current process to DriverTable()
+  Name -            RemoveFromProcTable
+  Purpose -         Removes current process from ProcTable()
   Parameters -      pid:    Unique Process ID
   Returns -         none
-  Side Effects -    Process added to DriverTable
-  ----------------------------------------------------------------------- */
-void AddToDriverTable(int pid){
-    /*** Function Initialization ***/
-    int index = pid % MAXPROC;
-    driver_ptr pDriver = &DriverTable[index];
-
-    /*** Update DriverTable Entry ***/
-    pDriver->wake_time = -1;
-    pDriver->been_zapped = -1;
-    pDriver->operation = -1;
-    pDriver->track_start = -1;
-    pDriver->sector_start = -1;
-    pDriver->current_sector = -1;
-    pDriver->num_sectors = -1;
-    pDriver->disk_buf = -1;
-    pDriver->disk_offset = -1;
-
-    totalDrivers++;
-} /* AddToDriverTable */
-
-
-/* ------------------------------------------------------------------------
- * TODO: header
-  Name -            RemoveFromProcTable
-  Purpose -
-  Parameters -
-
-  Returns -
-  Side Effects -
+  Side Effects -    Process removed from ProcTable
  ----------------------------------------------------------------------- */
 int RemoveFromProcTable(int pid){
     /*** Function Initialization ***/
     int index  = GetIndex(pid);
     proc_ptr pProc = &ProcTable[index];
 
-    pProc->pid = -1;
-    pProc->index = -1;
-    pProc->status = -1;
-    pProc->wakeTime = -1;
-    pProc->mboxID = -1;
-    pProc->blockSem = -1;
-    pProc->signalingSem = -1;
-    pProc->diskFirstTrack = -1;
-    pProc->diskFirstSec = -1;
-    pProc->diskSecs = -1;
-    pProc->diskBuffer = NULL;
-    pProc->diskRequest.opr = NULL;
-    pProc->diskRequest.reg1 = NULL;
-    pProc->diskRequest.reg2 = NULL;
+    /*** Remove Values ***/
+    pProc->pid = -1;            //process ID
+    pProc->index = -1;          //index Location
+    pProc->been_zapped = -1;    //zapping flag
+    pProc->mboxID = -1;         //mailbox ID
+    pProc->blockSem = -1;       //semaphore ID
+    pProc->status = -1;         //status
+    pProc->wakeTime = -1;       //time to wake
 
+    pProc->operation = -1;      //indicates disk operation
+    pProc->unit = -1;
+    pProc->trackStart = -1;     //track starting location
+    pProc->currentTrack = -1;   //current track location
+    pProc->sectorStart = -1;    //sector starting location   
+    pProc->currentSector = -1;  //current sector location
+    pProc->numSectors = -1;     //number of sectors
+    pProc->diskBuf = -1;        //starting buffer location
+    pProc->diskOffset = -1;     //current buffer location (512i)
+
+    pProc->diskRequest.opr = -1;
+    pProc->diskRequest.reg1 = -1;
+    pProc->diskRequest.reg2 = -1;
+
+    /*** Update Counter ***/
     totalProcs--;
 
 } /* RemoveFromProcTable */
-
-
-/* ------------------------------------------------------------------------
- * TODO: function
-  Name -            RemoveFromProcTable
-  Purpose -
-  Parameters -
-
-  Returns -
-  Side Effects -
- ----------------------------------------------------------------------- */
-int RemoveFromDriverTable(int pid){
-    /*** Function Initialization ***/
-    int index = pid % MAXPROC;
-    driver_ptr pDriver = &DriverTable[index];
-
-    pDriver->wake_time = -1;
-    pDriver->been_zapped = -1;
-    pDriver->operation = -1;
-    pDriver->track_start = -1;
-    pDriver->sector_start = -1;
-    pDriver->current_sector = -1;
-    pDriver->num_sectors = -1;
-    pDriver->disk_buf = NULL;
-    pDriver->disk_offset = NULL;
-
-    totalDrivers--;
-
-} /* RemoveFromDriverTable */
-
 
 /* ------------------------------------------------------------------------
     Name -          CreatePointer
@@ -816,20 +766,73 @@ proc_ptr CreatePointer(int pid){
 
 } /* CreatePointer */
 
+// /* ------------------------------------------------------------------------
+//   Name -            AddToDriverTable
+//   Purpose -         Adds current process to DriverTable()
+//   Parameters -      pid:    Unique Process ID
+//   Returns -         none
+//   Side Effects -    Process added to DriverTable
+//   ----------------------------------------------------------------------- */
+// void AddToDriverTable(int pid){
+//     /*** Function Initialization ***/
+//     int index = pid % MAXPROC;
+//     driver_ptr pDriver = &DriverTable[index];
 
-/* ------------------------------------------------------------------------
-    Name -          CreateDriverPointer
-    Purpose -       Creates a pointer to specified driver
-    Parameters -    did:    Driver ID
-    Returns -       Pointer to found driver
-    Side Effects -  None
-   ----------------------------------------------------------------------- */
-driver_ptr CreateDriverPointer(int pid){
-    /*** Create Current Pointer ***/
-    int index = pid % MAXPROC;
-    return &DriverTable[index];
+//     /*** Update DriverTable Entry ***/
+//     pDriver->wake_time = -1;
+//     pDriver->been_zapped = -1;
+//     pDriver->operation = -1;
+//     pDriver->trackStart = -1;
+//     pDriver->sector_start = -1;
+//     pDriver->current_sector = -1;
+//     pDriver->num_sectors = -1;
+//     pDriver->disk_buf = -1;
+//     pDriver->disk_offset = -1;
 
-} /* CreateDriverPointer */
+//     totalDrivers++;
+// } /* AddToDriverTable */
+
+// /* ------------------------------------------------------------------------
+//  * TODO: function
+//   Name -            RemoveFromProcTable
+//   Purpose -
+//   Parameters -
+
+//   Returns -
+//   Side Effects -
+//  ----------------------------------------------------------------------- */
+// int RemoveFromDriverTable(int pid){
+//     /*** Function Initialization ***/
+//     int index = pid % MAXPROC;
+//     driver_ptr pDriver = &DriverTable[index];
+
+//     pDriver->wake_time = -1;
+//     pDriver->been_zapped = -1;
+//     pDriver->operation = -1;
+//     pDriver->track_start = -1;
+//     pDriver->sector_start = -1;
+//     pDriver->current_sector = -1;
+//     pDriver->num_sectors = -1;
+//     pDriver->disk_buf = NULL;
+//     pDriver->disk_offset = NULL;
+
+//     totalDrivers--;
+
+// } /* RemoveFromDriverTable */
+
+// /* ------------------------------------------------------------------------
+//     Name -          CreateDriverPointer
+//     Purpose -       Creates a pointer to specified driver
+//     Parameters -    did:    Driver ID
+//     Returns -       Pointer to found driver
+//     Side Effects -  None
+//    ----------------------------------------------------------------------- */
+// driver_ptr CreateDriverPointer(int pid){
+//     /*** Create Current Pointer ***/
+//     int index = pid % MAXPROC;
+//     return &DriverTable[index];
+
+// } /* CreateDriverPointer */
 
 
 /* * * * * * * * * * * * * * * * END OF Process Functions * * * * * * * * * * * * * * * */
@@ -846,20 +849,13 @@ driver_ptr CreateDriverPointer(int pid){
     Returns -       None
     Side Effects -  None
    ----------------------------------------------------------------------- */
-void InitializeList(procQueue *pProc, diskQueue *pDisk) {
+void InitializeList(procQueue *pProc) {
 
-    if (pDisk == NULL) {
-        /*** Initialize Proc Queue ***/
-        pProc->pHeadProc = NULL;    //Head of Queue
-        pProc->pTailProc = NULL;    //Tail of Queue
-        pProc->total = 0;           //Total Count
-    }
-    else {
-        /*** Initialize Proc Queue ***/
-        pDisk->pHeadDisk = NULL;    //Head of Queue
-        pDisk->pTailDisk = NULL;    //Tail of Queue
-        pDisk->total = 0;           //Total Count
-    }
+    /*** Initialize Proc Queue ***/
+    pProc->pHeadProc = NULL;    //Head of Queue
+    pProc->pTailProc = NULL;    //Tail of Queue
+    pProc->total = 0;           //Total Count
+
 
 }/* InitializeList */
 
@@ -872,13 +868,9 @@ void InitializeList(procQueue *pProc, diskQueue *pDisk) {
                      1: full
     Side Effects -  none
    ----------------------------------------------------------------------- */
-bool ListIsFull(const procQueue *pProc, const diskQueue *pDisk) {
-    if (pDisk == NULL) {
-        return pProc->total == MAXPROC;
-    }
-    else {
-        return pDisk->total == MAXPROC;
-    }
+bool ListIsFull(const procQueue *pProc) {
+
+    return pProc->total == MAXPROC;
 
 }/* ListIsFull */
 
@@ -891,13 +883,9 @@ bool ListIsFull(const procQueue *pProc, const diskQueue *pDisk) {
                      1: Empty
     Side Effects -  none
    ----------------------------------------------------------------------- */
-bool ListIsEmpty(const procQueue *pProc, const diskQueue *pDisk) {
-    if (pDisk == NULL) {
-        return pProc->pHeadProc == NULL;
-    }
-    else {
-        return pDisk->pHeadDisk == NULL;
-    }
+bool ListIsEmpty(const procQueue *pProc) {
+
+    return pProc->pHeadProc == NULL;
 
 }/* ListIsEmpty */
 
@@ -911,143 +899,104 @@ bool ListIsEmpty(const procQueue *pProc, const diskQueue *pDisk) {
                     -1: Proc Queue is Full or System ProcTable is Full
     Side Effects -  None
    ----------------------------------------------------------------------- */
-int AddToList(proc_ptr pProc,  procQueue * pq, driver_ptr pDisk, diskQueue * dq) {
+int AddToList(proc_ptr pProc,  procQueue * pq) {
 
     /*** Function Initialization ***/
     bool procAdded = false; //Process Added flag
+    ProcList *pList;       //New Node
+    ProcList *pSave;       //Save Pointer
 
-    /*** If Process Table ***/
-    if (pDisk == NULL) {
-        ProcList *pList;       //New Node
-        ProcList *pSave;       //Save Pointer
+    /*** Error Check: Verify Space Available ***/
+    if (ListIsFull(pq)) {
+        DebugConsole4("%s: Queue is full.\n", __func__);
+        return -1;
+    }
 
-        /*** Error Check: Verify Space Available ***/
-        if (ListIsFull(pq, NULL)) {
-            DebugConsole4("%s: Queue is full.\n", __func__);
-            return -1;
-        }
+    /*** Prepare pList and pProc to add to Linked List ***/
+    /* Allocate Space for New Node */
+    pList = (ProcList *) malloc(sizeof(ProcList));
 
-        /*** Prepare pList and pProc to add to Linked List ***/
-        /* Allocate Space for New Node */
-        pList = (ProcList *) malloc(sizeof(ProcList));
+    /* Verify Allocation Success */
+    if (pList == NULL) {
+        DebugConsole4("%s: Failed to allocate memory for node in linked list. Halting...\n",
+                        __func__);
+        halt(1);    //memory allocation failed
+    }
 
-        /* Verify Allocation Success */
-        if (pList == NULL) {
-            DebugConsole4("%s: Failed to allocate memory for node in linked list. Halting...\n",
-                          __func__);
-            halt(1);    //memory allocation failed
-        }
+    /*** Add pList to ProcQueue and Update Links ***/
+    /* Point pList to pProc */
+    pList->pProc = pProc;
 
-        /*** Add pList to ProcQueue and Update Links ***/
-        /* Point pList to pProc */
-        pList->pProc = pProc;
+    /* Add New Node to List */
+    pList->pNextProc = NULL;                //assign pNext to NULL
 
-        /* Add New Node to List */
-        pList->pNextProc = NULL;                //assign pNext to NULL
+    if (ListIsEmpty(pq)) {                  //if list is empty...
+        pq->pHeadProc = pList;              //add pNew to front of list
+        pq->pTailProc = pList;              //reassign pTail to new node
+        procAdded = true;
+    }
+    else {                                  //if list not empty...
 
-        if (ListIsEmpty(pq, NULL)) {                  //if list is empty...
-            pq->pHeadProc = pList;              //add pNew to front of list
-            pq->pTailProc = pList;              //reassign pTail to new node
-            procAdded = true;
-        }
-        else {                                  //if list not empty...
-            /** Update SleepingProcs List **/
+        /** Iterate Through List **/
+        pSave = pq->pHeadProc;          //Set pSave to head of list
+        while (pSave != NULL) {   //verify not end of list
 
-            /** Iterate Through List **/
-            pSave = pq->pHeadProc;          //Set pSave to head of list
-            while (pSave != NULL) {   //verify not end of list
-
-                /** Compare Wake Times **/
-                /* if pProc wakes later than pSave, iterate */
-                if (pProc->wakeTime >= pSave->pProc->wakeTime) {
-                    pSave = pSave->pNextProc;       //increment to next in list
+            /** Compare Wake Times **/
+            /* if pProc wakes later than pSave, iterate */
+            if (pProc->wakeTime >= pSave->pProc->wakeTime) {
+                pSave = pSave->pNextProc;       //increment to next in list
+            }
+                /* if pSave wakes later than pProc, insert pProc */
+            else {
+                /* Adding Proc as New Head */
+                if (pSave == pq->pHeadProc) {
+                    pq->pHeadProc = pList;
+                    pSave->pPrevProc = pList;
+                    pList->pNextProc = pSave;
                 }
-                    /* if pSave wakes later than pProc, insert pProc */
+                /* Add Proc Between Two Procs */
                 else {
-                    /* Adding Proc as New Head */
-                    if (pSave == pq->pHeadProc) {
-                        pq->pHeadProc = pList;
-                        pSave->pPrevProc = pList;
-                        pList->pNextProc = pSave;
-                    }
-                        /* Add Proc Between Two Procs */
-                    else {
-                        pSave->pPrevProc->pNextProc = pList;
-                        pList->pPrevProc = pSave->pPrevProc;
-                        pList->pNextProc = pSave;
-                        pSave->pPrevProc = pList;
-                    }
-
-                    procAdded = true;   //update flag
-                    break;
+                    pSave->pPrevProc->pNextProc = pList;
+                    pList->pPrevProc = pSave->pPrevProc;
+                    pList->pNextProc = pSave;
+                    pSave->pPrevProc = pList;
                 }
 
-                /* Adding Proc as New Tail if pProc has biggest time */
-                if (pSave == pq->pTailProc) {
-                    pq->pTailProc = pList;
-                    pSave->pNextProc = pList;
-                    pList->pPrevProc = pSave;
-
-                    procAdded = true;
-                    break;
-                }
+                procAdded = true;   //update flag
+                break;
             }
 
-            if (procAdded == false) {
-                pq->pTailProc->pNextProc = pList;   //add pNew to end of list
-                pList->pPrevProc = pq->pTailProc;   //assign pNew prev to current tail
-                pq->pTailProc = pList;              //reassign pTail to new node
+            /* Adding Proc as New Tail if pProc has biggest time */
+            if (pSave == pq->pTailProc) {
+                pq->pTailProc = pList;
+                pSave->pNextProc = pList;
+                pList->pPrevProc = pSave;
+
+                procAdded = true;
+                break;
             }
         }
 
-        /* Update Counter */
-        pq->total++;            //update pq count
+        if (procAdded == false) {
+            pq->pTailProc->pNextProc = pList;   //add pNew to end of list
+            pList->pPrevProc = pq->pTailProc;   //assign pNew prev to current tail
+            pq->pTailProc = pList;              //reassign pTail to new node
+        }
+    }
+
+    /*** Update Counters ***/
+    /* List Total */
+    pq->total++;            //update pq count
+    
+    /* Global Total */
+    if (pq == &SleepingProcs){
         totalSleepingProcs++;
     }
-    /*** If Disk Table ***/
-    else {
-        DiskList *pList;       //New Node
-        DiskList *pSave;       //Save Pointer
-
-        /*** Error Check: Verify Space Available ***/
-        if (ListIsFull(NULL, dq)) {
-            DebugConsole4("%s: Queue is full.\n", __func__);
-            return -1;
-        }
-
-        /*** Prepare pList and pProc to add to Linked List ***/
-        /* Allocate Space for New Node */
-        pList = (DiskList *) malloc(sizeof(DiskList));
-
-        /* Verify Allocation Success */
-        if (pList == NULL) {
-            DebugConsole4("%s: Failed to allocate memory for node in linked list. Halting...\n",
-                          __func__);
-            halt(1);    //memory allocation failed
-        }
-
-        /*** Add pList to ProcQueue and Update Links ***/
-        /* Point pList to pProc */
-        pList->pDisk = pDisk;
-
-        /* Add New Node to List */
-        pList->pNextDisk = NULL;                //assign pNext to NULL
-
-        if (ListIsEmpty(NULL, dq)) {                  //if list is empty...
-            dq->pHeadDisk = pList;              //add pNew to front of list
-            dq->pTailDisk = pList;              //reassign pTail to new node
-            procAdded = true;
-        } else {                                  //if list not empty...
-            /*** Set Driver as New Tail ***/
-            dq->pTailDisk->pNextDisk = pList;   //add pNew to end of list
-            pList->pPrevDisk = dq->pTailDisk;   //assign pNew prev to current tail
-            dq->pTailDisk = pList;              //reassign pTail to new node
-            procAdded = true;
-        }
-
-        /* Update Counter */
-        dq->total++;            //update dq count
+    else if (pq == &requestQueue[0] || pq == &requestQueue[1]){
         totalRequestProcs++;
+    }
+    else {
+        DebugConsole4("%s: Invalid List", __func__);
     }
 
     /*** Function Termination ***/
@@ -1067,123 +1016,79 @@ int AddToList(proc_ptr pProc,  procQueue * pq, driver_ptr pDisk, diskQueue * dq)
     Returns -       Pid of Removed Process, halt (1) on error
     Side Effects -  None
    ----------------------------------------------------------------------- */
-int RemoveFromList(int pid, procQueue * pq, diskQueue * dq) {
+int RemoveFromList(int pid, procQueue * pq) {
 
     /*** Function Initialization ***/
     bool pidFlag = false;   //verify pid found in list
     bool remFlag = false;   //verify process removed successfully
 
-    /*** Process List ***/
-    if (dq == NULL) {
-        ProcList *pSave;       //Pointer for Linked List
+    ProcList *pSave;       //Pointer for Linked List
 
-        /*** Error Check: List is Empty ***/
-        if (ListIsEmpty(pq, NULL)) {
-            DebugConsole4("%s: Queue is empty.\n", __func__);
-            halt(1);
-        }
-
-        /*** Find PID and Remove from List ***/
-        pSave = pq->pHeadProc;              //Set pSave to head of list
-
-        /** PID Found **/
-        pidFlag = true;             //Trigger Flag - PID found
-
-        /** If pid to be removed is at head **/
-        if (pSave == pq->pHeadProc) {
-            pq->pHeadProc = pSave->pNextProc;       //Set next pid as head
-            pSave->pNextProc = NULL;                //Set old head next pointer to NULL
-
-            /* if proc is NOT only node on list */
-            if (pq->pHeadProc != NULL) {
-                pq->pHeadProc->pPrevProc = NULL;    //Set new head prev pointer to NULL
-            }
-
-                /* if proc IS only node on list */
-            else {
-                pSave->pPrevProc = NULL;            //Set old prev pointer to NULL
-                pq->pTailProc = NULL;               //Set new tail to NULL
-            }
-
-            remFlag = true;                         //Trigger Flag - Process Removed
-        }
-
-        /*** Decrement Counter ***/
-        pq->total--;
-        totalSleepingProcs--;
-
-        /*** Error Check: Pid Found and Removed ***/
-        if (pidFlag && remFlag) {
-            pSave = NULL;       //free() causing issues in USLOSS
-        }
-        else {
-            if (pidFlag == false)
-            {
-                DebugConsole4("%s: Unable to locate pid [%d]. Halting...\n",
-                              __func__, pid);
-                halt(1);
-            }
-            else if (remFlag == false)
-            {
-                DebugConsole4("%s: Removal of pid [%d] unsuccessful. Halting...\n",
-                              __func__, remFlag);
-                halt(1);
-            }
-        }
+    /*** Error Check: List is Empty ***/
+    if (ListIsEmpty(pq)) {
+        DebugConsole4("%s: Queue is empty.\n", __func__);
+        halt(1);
     }
-    /*** Driver List ***/
-    else {
-        DiskList *pSave;       //Pointer for Linked List
 
-        /*** Error Check: List is Empty ***/
-        if (ListIsEmpty(NULL, dq)) {
-            DebugConsole4("%s: Queue is empty.\n", __func__);
-            halt(1);
+    /*** Find PID and Remove from List ***/
+    pSave = pq->pHeadProc;              //Set pSave to head of list
+
+    /** PID Found **/
+    pidFlag = true;             //Trigger Flag - PID found
+
+    /** If pid to be removed is at head **/
+    if (pSave == pq->pHeadProc) {
+        pq->pHeadProc = pSave->pNextProc;       //Set next pid as head
+        pSave->pNextProc = NULL;                //Set old head next pointer to NULL
+
+        /* if proc is NOT only node on list */
+        if (pq->pHeadProc != NULL) {
+            pq->pHeadProc->pPrevProc = NULL;    //Set new head prev pointer to NULL
         }
 
-        /*** Find PID and Remove from List ***/
-        pSave = dq->pHeadDisk;              //Set pSave to head of list
-
-        dq->pHeadDisk = pSave->pNextDisk;   //Set next pid as head
-        pSave->pNextDisk = NULL;            //Set old head next pointer to NULL
-
-        /* if driver is NOT only node on list */
-        if (dq->pHeadDisk != NULL) {
-            dq->pHeadDisk->pPrevDisk = NULL;    //Set new head prev pointer to NULL
-        }
-
-        /* if driver IS only node on list */
+            /* if proc IS only node on list */
         else {
-            pSave->pPrevDisk = NULL;            //Set old prev pointer to NULL
-            dq->pTailDisk = NULL;               //Set new tail to NULL
+            pSave->pPrevProc = NULL;            //Set old prev pointer to NULL
+            pq->pTailProc = NULL;               //Set new tail to NULL
         }
 
-        pidFlag = true;
         remFlag = true;                         //Trigger Flag - Process Removed
+    }
 
-        /*** Decrement Counter ***/
-        dq->total--;
+    /*** Update Counters ***/
+    /* List Total */
+    pq->total--;            //update pq count
+    
+    /* Global Total */
+    if (pq == &SleepingProcs){
+        totalSleepingProcs--;
+    }
+    else if (pq == &requestQueue[0] || pq == &requestQueue[1]){
         totalRequestProcs--;
+    }
+    else {
+        DebugConsole4("%s: Invalid List", __func__);
+    }
 
-        /*** Error Check: Pid Found and Removed ***/
-        if (pidFlag && remFlag) {
-            pSave = NULL;       //free() causing issues in USLOSS
+    /*** Error Check: Pid Found and Removed ***/
+    if (pidFlag && remFlag) {
+        pSave = NULL;       //free() causing issues in USLOSS
+    }
+    else {
+        if (pidFlag == false)
+        {
+            DebugConsole4("%s: Unable to locate pid [%d]. Halting...\n",
+                            __func__, pid);
+            halt(1);
         }
-        else {
-            if (pidFlag == false)
-            {
-                DebugConsole4("%s: Unable to locate pid [%d]. Halting...\n",
-                              __func__, pid);
-                halt(1);
-            }
-            else if (remFlag == false)
-            {
-                DebugConsole4("%s: Removal of pid [%d] unsuccessful. Halting...\n",
-                              __func__, remFlag);
-                halt(1);
-            }
+        else if (remFlag == false)
+        {
+            DebugConsole4("%s: Removal of pid [%d] unsuccessful. Halting...\n",
+                            __func__, remFlag);
+            halt(1);
         }
     }
+    
 
     /*** Function Termination ***/
     return pid;     //process removal success
@@ -1281,6 +1186,7 @@ static void setKernelMode() {
 static void sysCall(sysargs *args) {
     char *pFunctionName;
     int *values;
+    int status = -1;
 
     if (args == NULL) {
         console("%s: Invalid syscall %d, no arguments.\n", __func__, args->number);
@@ -1313,11 +1219,26 @@ static void sysCall(sysargs *args) {
              *      arg4:  -1 - illegal values
              *              0 - otherwise
             */
-            args->arg4 = (void *) diskRead((__intptr_t) &args->arg1,
-                                (__intptr_t) args->arg2,
-                                (__intptr_t) args->arg3,
-                                (__intptr_t) args->arg4,
-                                (__intptr_t) args->arg5);
+            args->arg4 = (void *) diskIO(DISK_READ,
+                                        args->arg1, 
+                                        (__intptr_t) args->arg2, 
+                                        (__intptr_t) args->arg3, 
+                                        (__intptr_t) args->arg4, 
+                                        (__intptr_t) args->arg5);
+
+            if(args->arg4 == -1){
+                args->arg1 = DEV_INVALID;       //invalid parameters
+            }
+            else {
+                args->arg1 = (void *) DEV_OK;   //success
+            }
+
+            //TODO: delete 
+            // args->arg4 = (void *) diskRead((__intptr_t) &args->arg1,
+            //                     (__intptr_t) args->arg2,
+            //                     (__intptr_t) args->arg3,
+            //                     (__intptr_t) args->arg4,
+            //                     (__intptr_t) args->arg5);
             break;
         case SYS_DISKWRITE:
             /*** INPUT ***
@@ -1333,11 +1254,28 @@ static void sysCall(sysargs *args) {
              *      arg4:  -1 - illegal values
              *              0 - otherwise
             */
-            args->arg4 = (void *) diskWrite((__intptr_t) &args->arg1,
-                                (__intptr_t) args->arg2,
-                                (__intptr_t) args->arg3,
-                                (__intptr_t) args->arg4,
-                                (__intptr_t) args->arg5);
+            
+            args->arg4 = (void *) diskIO(DISK_WRITE,
+                                        args->arg1, 
+                                        (__intptr_t) args->arg2, 
+                                        (__intptr_t) args->arg3, 
+                                        (__intptr_t) args->arg4, 
+                                        (__intptr_t) args->arg5);
+            
+            if(args->arg4 == -1){
+                args->arg1 = DEV_INVALID;       //invalid parameters
+            }
+            else {
+                args->arg1 = (void *) DEV_OK;   //success
+            }
+
+            //TODO: delete
+            // args->arg4 = (void *) diskWrite((__intptr_t) &args->arg1,
+            //                     (__intptr_t) args->arg2,
+            //                     (__intptr_t) args->arg3,
+            //                     (__intptr_t) args->arg4,
+            //                     (__intptr_t) args->arg5);
+            
             break;
         case SYS_DISKSIZE:
             /*** INPUT ***

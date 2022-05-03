@@ -8,8 +8,6 @@
 #include <string.h>
 #include <usloss.h>
 
-#include "driver.h"
-
 #include "usloss/include/usloss.h"  //Added for Clion Functionality
 
 /** ------------------------- Constants ----------------------------------- **/
@@ -19,6 +17,9 @@
 #define READY       1
 #define SLEEPING    2
 #define ZAPPED      3
+
+#define CRIT_FULL   4
+#define CRIT_EMPTY  5
 
 /** ------------------------ Typedefs and Structs ------------------------ **/
 typedef struct p4proc_struct proc_struct;   //todo: need?
@@ -48,15 +49,22 @@ typedef struct procQueue {
 struct p4proc_struct {
     int     pid;            //process ID
     int     index;          //index Location
+    int     been_zapped;    //zapping flag
+    int     mboxID;         //mailbox ID
+    int     blockSem;       //semaphore ID
     int     status;         //status
     int     wakeTime;       //time to wake
-    int     mboxID;         //mailbox ID
-    int     blockSem;
-    int     signalingSem;
-    int     diskFirstTrack;
-    int     diskFirstSec;
-    int     diskSecs;
-    char    *diskBuffer;
+        /* Used for disk requests */
+    int     operation;      //indicates disk operation
+    int     unit;
+    int     trackStart;     //track starting location
+    int     currentTrack;   //current track location
+    int     sectorStart;    //sector starting location   
+    int     currentSector;  //current sector location
+    int     numSectors;     //number of sectors
+    void    *diskBuf;       //starting buffer location
+    void    *diskOffset;    //current buffer location (512i)
+
     // todo: lists?
     device_request diskRequest;     //found within usloss.h
 };
@@ -86,4 +94,18 @@ typedef struct sleepQueue {
 //end of Sleeping Process structures
 
 
-#endif //PROCESS_H
+struct psr_bits {
+    unsigned int cur_mode:1;
+    unsigned int cur_int_enable:1;
+    unsigned int prev_mode:1;
+    unsigned int prev_int_enable:1;
+    unsigned int unused:28;
+};
+
+union psr_values {
+    struct psr_bits bits;
+    unsigned int integer_part;
+};
+
+#endif  //PROCESS_H
+
