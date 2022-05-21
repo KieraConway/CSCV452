@@ -22,7 +22,6 @@
 #define CRIT_EMPTY  5
 
 /** ------------------------ Typedefs and Structs ------------------------ **/
-typedef struct p4proc_struct proc_struct;   //todo: need?
 typedef struct p4proc_struct p4proc_struct;
 typedef struct p4proc_struct * proc_ptr;
 typedef struct procQueue procQueue;
@@ -41,9 +40,9 @@ typedef struct procList{
 } ProcList;
 
 typedef struct procQueue {
-    ProcList *pHeadProc;            //points to proc list head
-    ProcList *pTailProc;            //points to proc list tail
-    int total;                      //counts total procs in queue
+    ProcList *pHeadProc;    //points to proc list head
+    ProcList *pTailProc;    //points to proc list tail
+    int total;              //counts total procs in queue
 } ProcQueue;
 
 struct p4proc_struct {
@@ -54,45 +53,20 @@ struct p4proc_struct {
     int     blockSem;       //semaphore ID
     int     status;         //status
     int     wakeTime;       //time to wake
-        /* Used for disk requests */
+
+    /* Used for disk requests */
     int     operation;      //indicates disk operation
     int     unit;
     int     trackStart;     //track starting location
     int     currentTrack;   //current track location
-    int     sectorStart;    //sector starting location   
+    int     sectorStart;    //sector starting location
     int     currentSector;  //current sector location
     int     numSectors;     //number of sectors
     void    *diskBuf;       //starting buffer location
     void    *diskOffset;    //current buffer location (512i)
-
-    // todo: lists?
     device_request diskRequest;     //found within usloss.h
 };
 //end of Process structures
-
-/* Structures for Sleeping Processes */
-typedef struct sleepList {
-    sleep_proc_ptr      pProc;
-    struct sleepList    *pNextProc;
-    struct sleepList    *pPrevProc;
-} SleepList;
-
-typedef struct sleepQueue {
-    SleepList   *pHeadProc;
-    SleepList   *pTailProc;
-    int         total;
-} SleepQueue;
-
-//struct sleep_struct {
-//    int     pid;            //process ID
-//    int     index;          //index Location
-//    int     status;         //status
-//    int     mSecSleep;      //mSec: milliseconds    //todo: need?
-//    int     wakeTime;       //time to wake
-//    int     signalingSem;
-//};
-//end of Sleeping Process structures
-
 
 struct psr_bits {
     unsigned int cur_mode:1;
@@ -108,4 +82,3 @@ union psr_values {
 };
 
 #endif  //PROCESS_H
-
