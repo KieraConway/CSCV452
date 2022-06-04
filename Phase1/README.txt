@@ -38,5 +38,3 @@ Notes:
 		-	test05: used the updated test case from D2L
 		-	test26: added 2 zeros to the loop 
 		-	all other test cases are ran as is
-
--
