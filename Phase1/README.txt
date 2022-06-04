@@ -7,19 +7,19 @@ Authors:    Kiera   Conway
 Contents:
 	
 	testcases:			Since mo difications were made to test05 
-						and test26 (details below), we included 
-						this file.
+					and test26 (details below), we included 
+					this file.
 	
 	kernel.h:			Header file that contains the linked list 
-						implemenation, process structure, and 
-						constants.
+					implemenation, process structure, and 
+					constants.
 	
 	makefile:			Automates compilation and linking process
 	
 	phase1.c:			Contains all functions necessary to pass 
-						test cases 00-36
+					test cases 00-36
 	
-	phase1Output.txt:	Output compilation for all test cases
+	phase1Output.txt:		Output compilation for all test cases
 	
 	README.txt:			General information regarding project
 	
