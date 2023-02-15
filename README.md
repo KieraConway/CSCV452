@@ -1,6 +1,5 @@
-# CSCV 452
-## Principles of Operating Systems
-
+<h1 align="center">CSCV 452 </h1>
+<h3 align="center">Principles of Operating Systems</h3>
 Project List
 
 - [X] Due 02/14/22  |   Programming Project Phase 1:  The Kernel
